@@ -1,6 +1,6 @@
 import type * as readline from 'readline';
 import type { Ansi } from './ansi';
-import { visibleWidth } from './ansi';
+import { visibleWidth, wrapSingleLineForWidth } from './ansi';
 import type { TuiColors } from './colors';
 import type { TuiContext, StartTuiOptions } from './types';
 
@@ -18,6 +18,7 @@ export interface TuiInternalState {
   activeAbortController: AbortController | undefined;
   isBusy: boolean;
   iterationBadge: string;
+  footerNote: string;
   /** True while the user is typing during a busy AI response; keeps cursor visible. */
   userTyping: boolean;
 }
@@ -27,6 +28,7 @@ export interface RendererDeps {
   ansi: Ansi;
   colors: TuiColors;
   fixedInput: boolean;
+  inputMode?: StartTuiOptions['inputMode'];
   rl: readline.Interface;
   anyRl: any;
   footerText?: StartTuiOptions['footerText'];
@@ -36,6 +38,22 @@ export interface RendererDeps {
 
 export function createRenderer(deps: RendererDeps) {
   const { state, ansi, colors, fixedInput, rl, anyRl } = deps;
+  const screenInputMode = fixedInput && deps.inputMode === 'screen';
+  const footerGapRows = 1;
+  const footerBlockRows = 2 + footerGapRows;
+  const nonScreenReservedRows = footerBlockRows + 2;
+  let cacheInvalidated = true;
+  let renderedContentRows: string[] = [];
+  let renderedSpinnerRow: { row: number; value: string } | undefined;
+  let renderedSeparatorRow: { row: number; value: string } | undefined;
+  let renderedFooter: {
+    separatorRow: number;
+    footerRow: number;
+    blankRow: number;
+    footerText: string;
+    badge: string;
+  } | undefined;
+  let renderedInputSignature: string | undefined;
 
   const getDisplayPos = (text: string) => {
     const width = Math.max(1, state.terminalWidth);
@@ -46,7 +64,50 @@ export function createRenderer(deps: RendererDeps) {
     };
   };
 
-  const maxContentLines = () => Math.max(1, state.terminalHeight - state.inputLineCount - 4);
+  const maxContentLines = () => screenInputMode
+    ? Math.max(1, state.terminalHeight - 1)
+    : Math.max(1, state.terminalHeight - state.inputLineCount - nonScreenReservedRows);
+
+  const getFooterLabel = () => {
+    const ctx = deps.getCtx();
+    const footerText =
+      typeof deps.footerText === 'function'
+        ? deps.footerText(ctx)
+        : (deps.footerText ?? '/ for commands');
+    return state.footerNote
+      ? `${footerText}  |  ${state.footerNote}`
+      : footerText;
+  };
+
+  const buildRightAlignedFooter = (footerLabel: string) => {
+    const renderedFooterLabel = wrapSingleLineForWidth(footerLabel, state.terminalWidth)[0] ?? '';
+    const padding = ' '.repeat(Math.max(0, state.terminalWidth - visibleWidth(renderedFooterLabel)));
+    return `${padding}${colors.gray}${renderedFooterLabel}${colors.reset}`;
+  };
+
+  const buildScreenChromeLine = () => {
+    const footerLabel = getFooterLabel();
+    if (!footerLabel) return buildSpinnerLine(state.spinnerStatus);
+
+    const renderedFooterLabel = wrapSingleLineForWidth(footerLabel, state.terminalWidth)[0] ?? '';
+    const footerWidth = visibleWidth(renderedFooterLabel);
+    if (footerWidth >= state.terminalWidth) {
+      return `${colors.gray}${renderedFooterLabel}${colors.reset}`;
+    }
+
+    const status = buildSpinnerLine(state.spinnerStatus);
+    if (!status) {
+      return buildRightAlignedFooter(footerLabel);
+    }
+
+    const maxStatusWidth = Math.max(0, state.terminalWidth - footerWidth - 1);
+    const renderedStatus = maxStatusWidth > 0
+      ? (wrapSingleLineForWidth(status, maxStatusWidth)[0] ?? '')
+      : '';
+    const gap = ' '.repeat(Math.max(0, state.terminalWidth - visibleWidth(renderedStatus) - footerWidth));
+
+    return `${renderedStatus}${gap}${colors.gray}${renderedFooterLabel}${colors.reset}`;
+  };
 
   const ensureScrollOffsetInRange = () => {
     const maxOffset = Math.max(0, state.contentBuffer.length - maxContentLines());
@@ -68,40 +129,195 @@ export function createRenderer(deps: RendererDeps) {
     return status;
   };
 
-  const renderFooterLine = () => {
-    if (!fixedInput) return;
-    const ctx = deps.getCtx();
-    const footerText =
-      typeof deps.footerText === 'function'
-        ? deps.footerText(ctx)
-        : (deps.footerText ?? '/ for commands');
-
-    process.stdout.write('\x1b7');
-    process.stdout.write(ansi.cursorPos(state.terminalHeight - 1, 1));
-    process.stdout.write(buildSeparatorLine(''));
-    process.stdout.write(ansi.cursorPos(state.terminalHeight, 1));
+  const writeLine = (row: number, content: string) => {
+    if (row < 1) return;
+    process.stdout.write(ansi.cursorPos(row, 1));
     process.stdout.write(ansi.clearLine);
-    process.stdout.write(
-      `${colors.bright}${colors.gray}${footerText.slice(0, state.terminalWidth)}${colors.reset}`,
-    );
+    if (content) process.stdout.write(content);
+  };
 
-    if (state.iterationBadge) {
-      const badge = ` ${state.iterationBadge} `;
-      const col = Math.max(1, state.terminalWidth - badge.length + 1);
-      process.stdout.write(ansi.cursorPos(state.terminalHeight, col));
-      process.stdout.write(`${colors.dim}${colors.cyan}${badge}${colors.reset}`);
+  const beginNonInputPaint = () => {
+    if (!fixedInput) return;
+    process.stdout.write(ansi.cursorHide);
+  };
+
+  const paintVisibleContent = () => {
+    const availableHeight = maxContentLines();
+    const startIdx = Math.max(
+      0,
+      state.contentBuffer.length - availableHeight - state.scrollOffset,
+    );
+    const endIdx = Math.min(state.contentBuffer.length, startIdx + availableHeight);
+    const visibleContent = state.contentBuffer.slice(startIdx, endIdx);
+
+    const rowCount = Math.max(renderedContentRows.length, availableHeight);
+    for (let row = 0; row < rowCount; row++) {
+      const nextLine = row < availableHeight ? (visibleContent[row] ?? '') : '';
+      const prevLine = renderedContentRows[row] ?? '';
+      if (cacheInvalidated || nextLine !== prevLine) {
+        writeLine(row + 1, nextLine);
+      }
     }
 
-    process.stdout.write('\x1b8');
+    renderedContentRows = Array.from({ length: availableHeight }, (_, index) => visibleContent[index] ?? '');
+  };
+
+  const invalidateCache = () => {
+    cacheInvalidated = true;
+    renderedContentRows = [];
+    renderedSpinnerRow = undefined;
+    renderedSeparatorRow = undefined;
+    renderedFooter = undefined;
+    renderedInputSignature = undefined;
+  };
+
+  const getInputLayout = () => {
+    const prompt: string = rl.getPrompt();
+    const inputText: string = (anyRl.line as string | undefined) ?? '';
+    const cursor: number = (anyRl.cursor as number | undefined) ?? inputText.length;
+    const promptAndInputDisplay = getDisplayPos(`${prompt}${inputText}`);
+    const lineCount = Math.max(1, Math.min(
+      promptAndInputDisplay.rows + 1,
+      Math.max(1, state.terminalHeight - nonScreenReservedRows - 1),
+    ));
+    const inputTopRow = Math.max(1, state.terminalHeight - lineCount - footerBlockRows + 1);
+    const textBeforeCursor = inputText.slice(0, cursor);
+    const cursorDisplay = getDisplayPos(`${prompt}${textBeforeCursor}`);
+    const cursorBottomRow = inputTopRow + lineCount - 1;
+
+    return {
+      prompt,
+      inputText,
+      lineCount,
+      inputTopRow,
+      cursorRow: Math.max(1, Math.min(cursorBottomRow, inputTopRow + cursorDisplay.rows)),
+      cursorCol: Math.max(1, Math.min(state.terminalWidth, cursorDisplay.cols + 1)),
+    };
+  };
+
+  const getInputSignature = () => {
+    const layout = getInputLayout();
+    const placeholderVisible = deps.placeholder && !state.isBusy && layout.inputText === ''
+      ? deps.placeholder
+      : '';
+    return [
+      layout.prompt,
+      layout.inputText,
+      String((anyRl.cursor as number | undefined) ?? layout.inputText.length),
+      String(layout.lineCount),
+      String(state.terminalWidth),
+      String(state.terminalHeight),
+      placeholderVisible,
+    ].join('\u0000');
+  };
+
+  const placeCursorInInput = () => {
+    if (!fixedInput || screenInputMode) return;
+    const layout = getInputLayout();
+    process.stdout.write(ansi.cursorPos(layout.cursorRow, layout.cursorCol));
+    process.stdout.write(ansi.cursorShow);
+  };
+
+  const renderFooterLine = () => {
+    if (!fixedInput) return;
+    const footerLabel = getFooterLabel();
+    const badge = state.iterationBadge;
+
+    if (screenInputMode) {
+      const footerChanged =
+        cacheInvalidated
+        || !renderedFooter
+        || renderedFooter.footerRow !== state.terminalHeight
+        || renderedFooter.footerText !== footerLabel
+        || renderedFooter.badge !== badge;
+
+      if (!footerChanged) return;
+
+      beginNonInputPaint();
+      writeLine(state.terminalHeight, buildScreenChromeLine());
+      renderedFooter = {
+        separatorRow: state.terminalHeight,
+        footerRow: state.terminalHeight,
+        blankRow: state.terminalHeight,
+        footerText: footerLabel,
+        badge,
+      };
+      return;
+    }
+
+    const separatorRow = state.terminalHeight - footerGapRows - 1;
+    const footerRow = state.terminalHeight - footerGapRows;
+    const blankRow = state.terminalHeight;
+    const footerChanged =
+      cacheInvalidated
+      || !renderedFooter
+      || renderedFooter.separatorRow !== separatorRow
+      || renderedFooter.footerRow !== footerRow
+      || renderedFooter.blankRow !== blankRow
+      || renderedFooter.footerText !== footerLabel
+      || renderedFooter.badge !== badge;
+
+    if (!footerChanged) {
+      placeCursorInInput();
+      return;
+    }
+
+    beginNonInputPaint();
+
+    if (renderedFooter && (
+      renderedFooter.separatorRow !== separatorRow
+      || renderedFooter.footerRow !== footerRow
+      || renderedFooter.blankRow !== blankRow
+    )) {
+      writeLine(renderedFooter.separatorRow, '');
+      writeLine(renderedFooter.footerRow, '');
+      writeLine(renderedFooter.blankRow, '');
+    }
+
+    const renderedFooterLabel = wrapSingleLineForWidth(footerLabel, state.terminalWidth)[0] ?? '';
+    writeLine(separatorRow, buildSeparatorLine(''));
+    writeLine(footerRow, `${colors.gray}${renderedFooterLabel}${colors.reset}`);
+    writeLine(blankRow, '');
+
+    if (badge) {
+      const badgeText = ` ${badge} `;
+      const col = Math.max(1, state.terminalWidth - badgeText.length + 1);
+      process.stdout.write(ansi.cursorPos(footerRow, col));
+      process.stdout.write(`${colors.dim}${colors.cyan}${badgeText}${colors.reset}`);
+    }
+
+    renderedFooter = { separatorRow, footerRow, blankRow, footerText: footerLabel, badge };
+    placeCursorInInput();
   };
 
   const renderSpinnerRow = () => {
     if (!fixedInput || state.isRendering) return;
-    process.stdout.write('\x1b7');
-    process.stdout.write(ansi.cursorPos(state.terminalHeight - state.inputLineCount - 3, 1));
-    process.stdout.write(ansi.clearLine);
-    process.stdout.write(buildSpinnerLine(state.spinnerStatus));
-    process.stdout.write('\x1b8');
+    if (screenInputMode) {
+      beginNonInputPaint();
+      writeLine(state.terminalHeight, buildSpinnerLine(state.spinnerStatus));
+      return;
+    }
+    const row = state.terminalHeight - state.inputLineCount - footerBlockRows - 1;
+    const value = buildSpinnerLine(state.spinnerStatus);
+    if (
+      !cacheInvalidated
+      && renderedSpinnerRow
+      && renderedSpinnerRow.row === row
+      && renderedSpinnerRow.value === value
+    ) {
+      placeCursorInInput();
+      return;
+    }
+
+    beginNonInputPaint();
+
+    if (renderedSpinnerRow && renderedSpinnerRow.row !== row) {
+      writeLine(renderedSpinnerRow.row, '');
+    }
+
+    writeLine(row, value);
+    renderedSpinnerRow = { row, value };
+    placeCursorInInput();
   };
 
   // Forward-declared so requestRender can reference it.
@@ -126,43 +342,64 @@ export function createRenderer(deps: RendererDeps) {
 
     ensureScrollOffsetInRange();
     rl.pause();
+    beginNonInputPaint();
 
-    const availableHeight = maxContentLines();
-    const startIdx = Math.max(
-      0,
-      state.contentBuffer.length - availableHeight - state.scrollOffset,
-    );
-    const endIdx = Math.min(state.contentBuffer.length, startIdx + availableHeight);
-    const visibleContent = state.contentBuffer.slice(startIdx, endIdx);
-
-    for (let row = 0; row < availableHeight; row++) {
-      process.stdout.write(ansi.cursorPos(row + 1, 1));
-      process.stdout.write(ansi.clearLine);
-      const line = visibleContent[row];
-      if (typeof line === 'string') process.stdout.write(line);
-    }
+    paintVisibleContent();
 
     // Spinner / scroll-hint row (exclusively chrome).
-    process.stdout.write(ansi.cursorPos(state.terminalHeight - state.inputLineCount - 3, 1));
-    process.stdout.write(ansi.clearLine);
-    process.stdout.write(buildSpinnerLine(state.spinnerStatus));
+    if (screenInputMode) {
+      renderFooterLine();
+    } else {
+      const spinnerRow = state.terminalHeight - state.inputLineCount - footerBlockRows - 1;
+      const spinnerValue = buildSpinnerLine(state.spinnerStatus);
+      if (
+        cacheInvalidated
+        || !renderedSpinnerRow
+        || renderedSpinnerRow.row !== spinnerRow
+        || renderedSpinnerRow.value !== spinnerValue
+      ) {
+        if (renderedSpinnerRow && renderedSpinnerRow.row !== spinnerRow) {
+          writeLine(renderedSpinnerRow.row, '');
+        }
+        writeLine(spinnerRow, spinnerValue);
+        renderedSpinnerRow = { row: spinnerRow, value: spinnerValue };
+      }
+    }
 
-    // Separator above input.
-    process.stdout.write(ansi.cursorPos(state.terminalHeight - state.inputLineCount - 2, 1));
-    process.stdout.write(ansi.clearLine);
-    process.stdout.write(buildSeparatorLine(''));
+    if (!screenInputMode) {
+      // Separator above input.
+      const separatorRow = state.terminalHeight - state.inputLineCount - footerBlockRows;
+      const separatorValue = buildSeparatorLine('');
+      if (
+        cacheInvalidated
+        || !renderedSeparatorRow
+        || renderedSeparatorRow.row !== separatorRow
+        || renderedSeparatorRow.value !== separatorValue
+      ) {
+        if (renderedSeparatorRow && renderedSeparatorRow.row !== separatorRow) {
+          writeLine(renderedSeparatorRow.row, '');
+        }
+        writeLine(separatorRow, separatorValue);
+        renderedSeparatorRow = { row: separatorRow, value: separatorValue };
+      }
+    }
 
-    // Input rows are positioned and rendered by patchRefreshLine/_refreshLine.
     rl.resume();
     const inputLineCountBeforeRefresh = state.inputLineCount;
-    if (typeof anyRl._refreshLine === 'function') {
+    const inputSignature = !screenInputMode ? getInputSignature() : undefined;
+    if (
+      !screenInputMode
+      && typeof anyRl._refreshLine === 'function'
+      && (cacheInvalidated || renderedInputSignature !== inputSignature)
+    ) {
       anyRl._refreshLine();
-    } else {
-      rl.prompt(true);
+    } else if (!screenInputMode) {
       renderFooterLine();
     }
 
-    process.stdout.write((state.isBusy && !state.userTyping) ? ansi.cursorHide : ansi.cursorShow);
+    if (screenInputMode) process.stdout.write(ansi.cursorHide);
+    else placeCursorInInput();
+    cacheInvalidated = false;
 
     state.isRendering = false;
 
@@ -181,21 +418,27 @@ export function createRenderer(deps: RendererDeps) {
   /** Patch readline's internal `_refreshLine` to keep the footer painted. */
   const patchRefreshLine = () => {
     if (!fixedInput || typeof anyRl._refreshLine !== 'function') return;
+    if (screenInputMode) {
+      anyRl._refreshLine = () => {
+        state.inputLineCount = 1;
+        anyRl._prevRows = 0;
+        if (!state.isRendering) {
+          state.userTyping = true;
+          requestRender();
+        }
+      };
+      return;
+    }
     anyRl._refreshLine = () => {
-      const prompt: string = rl.getPrompt();
-      const inputText: string = (anyRl.line as string | undefined) ?? '';
-      const cursor: number = (anyRl.cursor as number | undefined) ?? inputText.length;
-      const promptAndInputDisplay = getDisplayPos(`${prompt}${inputText}`);
-      const newCount = Math.max(1, Math.min(
-        promptAndInputDisplay.rows + 1,
-        Math.max(1, state.terminalHeight - 5),
-      ));
+      beginNonInputPaint();
+      const layout = getInputLayout();
+      const { prompt, inputText, lineCount: newCount, inputTopRow, cursorRow, cursorCol } = layout;
       const oldCount = state.inputLineCount;
       const maxCount = Math.max(newCount, oldCount);
 
       // Clear entire region that was or will be occupied by input.
       for (let i = 0; i < maxCount; i++) {
-        const row = state.terminalHeight - maxCount - 1 + i;
+        const row = state.terminalHeight - maxCount - footerBlockRows + 1 + i;
         if (row >= 1) {
           process.stdout.write(ansi.cursorPos(row, 1));
           process.stdout.write(ansi.clearLine);
@@ -207,8 +450,8 @@ export function createRenderer(deps: RendererDeps) {
       // When the zone height changed, immediately redraw separator/spinner so
       // there is no flash while waiting for requestRender.
       if (newCount !== oldCount) {
-        const oldSpinnerRow = state.terminalHeight - oldCount - 3;
-        const oldSeparatorRow = state.terminalHeight - oldCount - 2;
+        const oldSpinnerRow = state.terminalHeight - oldCount - footerBlockRows - 1;
+        const oldSeparatorRow = state.terminalHeight - oldCount - footerBlockRows;
         if (oldSpinnerRow >= 1) {
           process.stdout.write(ansi.cursorPos(oldSpinnerRow, 1));
           process.stdout.write(ansi.clearLine);
@@ -218,21 +461,26 @@ export function createRenderer(deps: RendererDeps) {
           process.stdout.write(ansi.clearLine);
         }
 
-        const spinnerRow = state.terminalHeight - newCount - 3;
-        const separatorRow = state.terminalHeight - newCount - 2;
+        ensureScrollOffsetInRange();
+        paintVisibleContent();
+
+        const spinnerRow = state.terminalHeight - newCount - footerBlockRows - 1;
+        const separatorRow = state.terminalHeight - newCount - footerBlockRows;
+        const spinnerValue = buildSpinnerLine(state.spinnerStatus);
+        const separatorValue = buildSeparatorLine('');
         if (spinnerRow >= 1) {
           process.stdout.write(ansi.cursorPos(spinnerRow, 1));
           process.stdout.write(ansi.clearLine);
-          process.stdout.write(buildSpinnerLine(state.spinnerStatus));
+          process.stdout.write(spinnerValue);
+          renderedSpinnerRow = { row: spinnerRow, value: spinnerValue };
         }
         if (separatorRow >= 1) {
           process.stdout.write(ansi.cursorPos(separatorRow, 1));
           process.stdout.write(ansi.clearLine);
-          process.stdout.write(buildSeparatorLine(''));
+          process.stdout.write(separatorValue);
+          renderedSeparatorRow = { row: separatorRow, value: separatorValue };
         }
       }
-
-      const inputTopRow = Math.max(1, state.terminalHeight - newCount - 1);
 
       // Write prompt on the first input row, then the input text (terminal
       // wraps it naturally across subsequent rows in the zone).
@@ -241,15 +489,12 @@ export function createRenderer(deps: RendererDeps) {
       if (inputText.length > 0) process.stdout.write(inputText);
 
       // Position the visible cursor at the correct spot within the input.
-      const textBeforeCursor = inputText.slice(0, cursor);
-      const cursorDisplay = getDisplayPos(`${prompt}${textBeforeCursor}`);
-      const cursorRow = inputTopRow + cursorDisplay.rows;
-      const cursorCol = cursorDisplay.cols + 1; // 1-indexed
       process.stdout.write(ansi.cursorPos(cursorRow, cursorCol));
 
       // Keep readline's internal row count in sync so any other internal
       // readline call that reads _prevRows gets a sensible value.
       anyRl._prevRows = newCount - 1;
+      renderedInputSignature = getInputSignature();
 
       // Placeholder shown when input is empty.
       if (deps.placeholder && !state.isBusy && inputText === '') {
@@ -263,8 +508,9 @@ export function createRenderer(deps: RendererDeps) {
       // Mark that user is actively typing (keeps cursor visible during streaming).
       if (!state.isRendering) {
         state.userTyping = true;
-        process.stdout.write(ansi.cursorShow);
       }
+
+      placeCursorInInput();
 
       if (newCount !== oldCount && !state.isRendering) {
         requestRender();
@@ -278,6 +524,7 @@ export function createRenderer(deps: RendererDeps) {
     renderFooterLine,
     renderSpinnerRow,
     renderScreen,
+    invalidateCache,
     requestRender,
     maxContentLines,
     ensureScrollOffsetInRange,

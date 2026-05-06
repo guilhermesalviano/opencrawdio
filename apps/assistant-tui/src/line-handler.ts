@@ -1,10 +1,10 @@
 import type * as readline from 'readline';
 import { startSpinner } from './spinner';
 import { isAbortError, emitTerminalBell, normalizeCommandResult } from './utils';
-import { wrapSingleLineForWidth } from './ansi';
+import { visibleWidth, wrapSingleLineForWidth } from './ansi';
 import type { Ansi } from './ansi';
 import type { TuiColors } from './colors';
-import type { TuiContext, SessionState, StartTuiOptions } from './types';
+import type { TuiContext, SessionState, StartTuiOptions, TuiKeypress } from './types';
 import type { TuiInternalState } from './renderer';
 import { splitThinking, defaultFormatThinking } from './formatting';
 
@@ -36,6 +36,21 @@ export interface LineHandlerDeps {
   /** Records raw text into the resize rawBuffer without writing to contentBuffer. */
   recordRaw: (text: string) => void;
 }
+
+export function resolveSubmittedInput(input: string, allowEmptyInput = false): string | undefined {
+  const trimmed = input.trim();
+  if (trimmed.length > 0) {
+    return trimmed;
+  }
+
+  return allowEmptyInput ? '' : undefined;
+}
+
+export function getSigintAction(isAwaitingExitConfirmation: boolean): 'prompt' | 'exit' {
+  return isAwaitingExitConfirmation ? 'exit' : 'prompt';
+}
+
+const EXIT_CONFIRMATION_TIMEOUT_MS = 2000;
 
 // ── Stream rendering ──────────────────────────────────────────────────────────
 
@@ -260,26 +275,102 @@ export function setupLineHandlers(deps: LineHandlerDeps): void {
   } = deps;
 
   const confirmExit = options.confirmExit ?? true;
+  const screenInputMode = options.inputMode === 'screen';
+  const originalTtyWrite = anyRl._ttyWrite?.bind(rl);
+  const originalWriteToOutput = anyRl._writeToOutput?.bind(rl);
+  let awaitingExitConfirmation = false;
+  let onExitConfirmationKeypress: ((value: string, key?: TuiKeypress) => void) | undefined;
+  let exitConfirmationTimeout: NodeJS.Timeout | undefined;
+
+  const renderFooter = () => {
+    const footerText =
+      typeof options.footerText === 'function'
+        ? options.footerText(ctx)
+        : (options.footerText ?? '/ for commands');
+    const footerLabel = state.footerNote
+      ? `${footerText}  |  ${state.footerNote}`
+      : footerText;
+    const renderedFooterLabel = wrapSingleLineForWidth(footerLabel, state.terminalWidth)[0] ?? '';
+    const footerPadding = ' '.repeat(Math.max(0, state.terminalWidth - visibleWidth(renderedFooterLabel)));
+    const footerContent = screenInputMode
+      ? `${footerPadding}${colors.gray}${renderedFooterLabel}${colors.reset}`
+      : `${colors.gray}${renderedFooterLabel}${colors.reset}`;
+
+    process.stdout.write('\x1b7');
+    process.stdout.write(ansi.cursorPos(screenInputMode ? state.terminalHeight : state.terminalHeight - 1, 1));
+    process.stdout.write(ansi.clearLine);
+    process.stdout.write(footerContent);
+    if (!screenInputMode) {
+      process.stdout.write(ansi.cursorPos(state.terminalHeight, 1));
+      process.stdout.write(ansi.clearLine);
+    }
+    process.stdout.write('\x1b8');
+  };
+
+  const clearExitConfirmation = () => {
+    if (exitConfirmationTimeout) {
+      clearTimeout(exitConfirmationTimeout);
+      exitConfirmationTimeout = undefined;
+    }
+    awaitingExitConfirmation = false;
+    if (onExitConfirmationKeypress) {
+      anyRl.input?.removeListener('keypress', onExitConfirmationKeypress);
+      onExitConfirmationKeypress = undefined;
+    }
+    renderFooter();
+    rl.prompt();
+  };
+
+  if (screenInputMode && typeof originalWriteToOutput === 'function') {
+    anyRl._writeToOutput = (_stringToWrite: string) => {
+      // Screen mode owns the entire viewport, so readline should update only
+      // its internal buffer; rendering happens via ctx.redraw()/requestRender().
+    };
+  }
+
+  if (typeof originalTtyWrite === 'function' && typeof options.onKeypress === 'function') {
+    anyRl._ttyWrite = (s: string, key?: TuiKeypress) => {
+      if (!state.isBusy && options.onKeypress?.(s, key, ctx)) {
+        return;
+      }
+
+      const result = originalTtyWrite(s, key);
+
+      if (
+        screenInputMode
+        && !state.isBusy
+        && key?.name !== 'return'
+        && key?.name !== 'enter'
+        && key?.name !== 'escape'
+      ) {
+        ctx.redraw();
+      }
+
+      return result;
+    };
+  }
 
   rl.on('line', async (input: string) => {
     acDismiss();
     state.scrollOffset = 0;
 
-    const trimmed = input.trim();
-    if (!trimmed) { rl.prompt(); return; }
+    const submittedInput = resolveSubmittedInput(input, options.allowEmptyInput);
+    if (submittedInput === undefined) { rl.prompt(); return; }
 
-    println(`${colors.bgGray}${colors.white} ${trimmed} ${colors.reset}`);
-    println();
-    if (fixedInput) requestRender();
+    if (!screenInputMode) {
+      println(`${colors.bgGray}${colors.white} ${submittedInput} ${colors.reset}`);
+      println();
+      if (fixedInput) requestRender();
+    }
 
-    const shouldRouteToCommand = Boolean(options.onCommand) && isCommand(trimmed);
+    const shouldRouteToCommand = Boolean(options.onCommand) && isCommand(submittedInput);
 
     if (shouldRouteToCommand && options.onCommand) {
-      const result = await options.onCommand(trimmed, ctx);
+      const result = await options.onCommand(submittedInput, ctx);
       const commandResult = normalizeCommandResult(result);
 
       if (commandResult && commandResult.handled === false) {
-        await handleNormalInput(trimmed, deps);
+        await handleNormalInput(submittedInput, deps);
         return;
       }
 
@@ -320,12 +411,22 @@ export function setupLineHandlers(deps: LineHandlerDeps): void {
       return;
     }
 
-    await handleNormalInput(trimmed, deps);
+    await handleNormalInput(submittedInput, deps);
   });
 
   rl.on('close', () => {
+    if (exitConfirmationTimeout) {
+      clearTimeout(exitConfirmationTimeout);
+      exitConfirmationTimeout = undefined;
+    }
     process.stdout.removeListener('resize', handleResize);
     acInput?.removeListener('keypress', onAcKeypress);
+    if (typeof originalTtyWrite === 'function') {
+      anyRl._ttyWrite = originalTtyWrite;
+    }
+    if (typeof originalWriteToOutput === 'function') {
+      anyRl._writeToOutput = originalWriteToOutput;
+    }
     println(`\n${colors.dim}Session ended. Messages: ${session.messageCount}${colors.reset}`);
 
     if (inputFilter) {
@@ -344,37 +445,44 @@ export function setupLineHandlers(deps: LineHandlerDeps): void {
 
   if (confirmExit) {
     rl.on('SIGINT', () => {
+      const sigintAction = getSigintAction(awaitingExitConfirmation);
+      if (sigintAction === 'exit') {
+        if (exitConfirmationTimeout) {
+          clearTimeout(exitConfirmationTimeout);
+          exitConfirmationTimeout = undefined;
+        }
+        if (onExitConfirmationKeypress) {
+          anyRl.input?.removeListener('keypress', onExitConfirmationKeypress);
+          onExitConfirmationKeypress = undefined;
+        }
+        awaitingExitConfirmation = false;
+        rl.close();
+        return;
+      }
+
+      awaitingExitConfirmation = true;
       anyRl.line   = '';
       anyRl.cursor = 0;
 
       process.stdout.write('\x1b7');
       process.stdout.write(ansi.cursorPos(state.terminalHeight, 1));
       process.stdout.write(ansi.clearLine);
-      process.stdout.write(`${colors.yellow}Are you sure you want to exit? (y/n)${colors.reset} `);
+      process.stdout.write(`${colors.yellow}Press ${colors.bright}Ctrl+C${colors.reset}${colors.yellow} to confirm exit${colors.reset} `);
       process.stdout.write(ansi.cursorShow);
       process.stdout.write('\x1b8');
 
-      const onKey = (key: string) => {
-        if (key.toLowerCase() === 'y') {
-          rl.close();
-        } else {
-          const footerText =
-            typeof options.footerText === 'function'
-              ? options.footerText(ctx)
-              : (options.footerText ?? '/ for commands');
-          process.stdout.write('\x1b7');
-          process.stdout.write(ansi.cursorPos(state.terminalHeight, 1));
-          process.stdout.write(ansi.clearLine);
-          process.stdout.write(
-            `${colors.bright}${colors.cyan}${footerText.slice(0, state.terminalWidth)}${colors.reset}`,
-          );
-          process.stdout.write('\x1b8');
-          rl.prompt();
+      onExitConfirmationKeypress = (_value: string, key?: TuiKeypress) => {
+        if (key?.ctrl && key.name === 'c') {
+          return;
         }
-        anyRl.input?.removeListener('keypress', onKey);
+
+        clearExitConfirmation();
       };
 
-      anyRl.input?.on('keypress', onKey);
+      anyRl.input?.on('keypress', onExitConfirmationKeypress);
+      exitConfirmationTimeout = setTimeout(() => {
+        clearExitConfirmation();
+      }, EXIT_CONFIRMATION_TIMEOUT_MS);
     });
   }
 }

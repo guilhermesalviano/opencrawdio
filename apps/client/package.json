@@ -8,6 +8,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
+    "onboard": "node dist/src/onboard.js",
     "app": "node dist/src/app.js",
     "clean": "rm -rf dist",
     "build": "pnpm run clean && tsc --project tsconfig.json",

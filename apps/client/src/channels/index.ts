@@ -75,10 +75,10 @@ class ChannelsSingleton {
       const channels = [
         {
           name: 'telegram',
-          enabled: () => !!config.TELEGRAM.BOT_TOKEN,
+          enabled: () => !!config.CHANNELS.TELEGRAM.BOT_TOKEN,
           start: (logger: ILogger, agent: IAgent) => {
             const { stop } = TelegramChannelFactory.start({
-              token: config.TELEGRAM.BOT_TOKEN,
+              token: config.CHANNELS.TELEGRAM.BOT_TOKEN,
               agent,
               logger,
             });

@@ -16,10 +16,13 @@
     },
     "INTERVAL_MS": 1800000
   },
-  "telegram": {
-    "BOT_TOKEN": "YOUR_BOT_TOKEN",
-    "USE_POLLING": true,
-    "CHAT_ID": "YOUR_CHAT_ID"
+  "channels": {
+    "telegram": {
+      "ENABLED": true,
+      "BOT_TOKEN": "YOUR_BOT_TOKEN",
+      "USE_POLLING": true,
+      "CHAT_ID": "YOUR_CHAT_ID"
+    }
   },
   "ai": {
     "ALLOW_REMOTE_BASE_URL": false,

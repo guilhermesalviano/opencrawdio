@@ -125,6 +125,16 @@ export function createAutocomplete(deps: AutocompleteDeps) {
     acDismiss();
   };
 
+  const isAutocompleteContext = (typedChar?: string) => {
+    const currentLine: string = anyRl.line ?? '';
+    if (acSuggestions.length > 0) return true;
+    if (currentLine.startsWith('/') && !currentLine.includes(' ')) return true;
+    if (currentLine.includes('@')) return true;
+    if (typedChar === '/' && currentLine.length === 0) return true;
+    if (typedChar === '@') return true;
+    return false;
+  };
+
   // ── Apply suggestion ───────────────────────────────────────────────────────
 
   const acApply = (chosen: string) => {
@@ -170,7 +180,10 @@ export function createAutocomplete(deps: AutocompleteDeps) {
     }
 
     if (k === 'tab') {
-      if (acSuggestions.length === 0) { acUpdateFromInput(); return; }
+      if (acSuggestions.length === 0) {
+        if (isAutocompleteContext(_ch)) acUpdateFromInput();
+        return;
+      }
       acIndex = key?.shift
         ? (acIndex <= 0 ? acSuggestions.length - 1 : acIndex - 1)
         : (acIndex + 1) % acSuggestions.length;
@@ -209,7 +222,7 @@ export function createAutocomplete(deps: AutocompleteDeps) {
 
     if (k === 'escape') { acDismiss(); return; }
 
-    if (k !== 'return' && k !== 'enter') {
+    if ((k !== 'return' && k !== 'enter') && isAutocompleteContext(_ch)) {
       // Readline updates `line`/`cursor` after keypress handlers run. Defer one
       // tick so wrapping math uses the updated buffer while typing.
       setTimeout(() => {

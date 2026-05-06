@@ -20,6 +20,10 @@ export interface TuiContext {
   session: SessionState;
   colors: TuiColors;
   clear(): void;
+  /** Clears buffered content and re-renders the current screen/welcome view. */
+  redraw(): void;
+  getInputValue(): string;
+  setInputValue(value: string): void;
   println(text?: string): void;
   contentBuffer: string[];
   terminalWidth: number;
@@ -28,6 +32,8 @@ export interface TuiContext {
   cancelActiveRequest(): boolean;
   /** Update the iteration badge shown in the bottom-right corner. Pass empty string to clear. */
   setIterationBadge(text: string): void;
+  /** Update the footer note shown after the base footer text. Pass empty string to clear. */
+  setFooterNote(text: string): void;
 }
 
 export interface SpinnerOptions {
@@ -42,9 +48,21 @@ export interface CommandSuggestion {
   description?: string;
 }
 
+export interface TuiKeypress {
+  name?: string;
+  ctrl?: boolean;
+  meta?: boolean;
+  shift?: boolean;
+  sequence?: string;
+}
+
 export interface StartTuiOptions {
   onInput(input: string, ctx: TuiContext): Promise<string | AsyncIterable<string> | void>;
+  /** When true, pressing Enter on a blank line still calls onInput with an empty string. */
+  allowEmptyInput?: boolean;
   onCommand?: (command: string, ctx: TuiContext) => Promise<TuiCommandResult | string | void>;
+  onKeypress?: (ch: string, key: TuiKeypress | undefined, ctx: TuiContext) => boolean | void;
+  inputMode?: 'fixed' | 'screen';
   isCommand?: (line: string) => boolean;
   prompt?: string;
   footerText?: string | ((ctx: TuiContext) => string);

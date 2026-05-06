@@ -15,15 +15,17 @@ export type {
   SessionState,
   SpinnerOptions,
   StartTuiOptions,
+  TuiKeypress,
   TuiAction,
   TuiCommandResult,
   TuiContext,
 } from './types';
 
-export function startTui(options: StartTuiOptions): void {
+export function startTui(options: StartTuiOptions): TuiContext {
   const session: SessionState = { messageCount: 0, startTime: new Date() };
   const colors = defaultColors;
   const fixedInput = options.fixedInput !== false;
+  const screenInputMode = fixedInput && options.inputMode === 'screen';
 
   // ── Shared mutable state (passed by reference to all sub-modules) ───────────
   const state: TuiInternalState = {
@@ -38,6 +40,7 @@ export function startTui(options: StartTuiOptions): void {
     activeAbortController: undefined,
     isBusy: false,
     iterationBadge: '',
+    footerNote: '',
     inputLineCount: 1,
     userTyping: false,
   };
@@ -50,6 +53,7 @@ export function startTui(options: StartTuiOptions): void {
 
   // ── clearScreen (needs no other module) ────────────────────────────────────
   const clearScreen = () => {
+    rendererRef.current?.invalidateCache();
     if (fixedInput) {
       process.stdout.write(ansi.clearScreen);
       process.stdout.write(ansi.cursorHome);
@@ -62,17 +66,17 @@ export function startTui(options: StartTuiOptions): void {
   const rendererRef: { current: ReturnType<typeof createRenderer> | null } = { current: null };
 
   // ── Input filter for scroll events ─────────────────────────────────────────
-  const inputFilter = fixedInput
+  const inputFilter = fixedInput && !screenInputMode
     ? createInputFilter({
         line: (dir) => {
-          const maxLines = rendererRef.current?.maxContentLines() ?? Math.max(1, state.terminalHeight - 5);
+          const maxLines = rendererRef.current?.maxContentLines() ?? Math.max(1, state.terminalHeight - 6);
           const delta = Math.max(1, Math.min(5, Math.floor(maxLines / 12) + 1));
           state.scrollOffset += dir === 'up' ? delta : -delta;
           rendererRef.current?.ensureScrollOffsetInRange();
           rendererRef.current?.requestRender();
         },
         page: (dir) => {
-          const maxLines = rendererRef.current?.maxContentLines() ?? Math.max(1, state.terminalHeight - 5);
+          const maxLines = rendererRef.current?.maxContentLines() ?? Math.max(1, state.terminalHeight - 6);
           state.scrollOffset += dir === 'up' ? maxLines : -maxLines;
           rendererRef.current?.ensureScrollOffsetInRange();
           rendererRef.current?.requestRender();
@@ -91,12 +95,22 @@ export function startTui(options: StartTuiOptions): void {
 
   // ── ctx (println deferred via let + closure) ────────────────────────────────
   let println: (text?: string) => void = () => {};
+  let redraw: () => void = () => {};
 
   const ctx: TuiContext = {
     rl,
     session,
     colors,
     clear: clearScreen,
+    redraw: () => redraw(),
+    getInputValue: () => String(anyRl.line ?? ''),
+    setInputValue: (value: string) => {
+      anyRl.line = value;
+      anyRl.cursor = value.length;
+      if (typeof anyRl._refreshLine === 'function') {
+        anyRl._refreshLine();
+      }
+    },
     println: (text?: string) => println(text),
     contentBuffer: state.contentBuffer,
     terminalWidth: state.terminalWidth,
@@ -111,6 +125,10 @@ export function startTui(options: StartTuiOptions): void {
       state.iterationBadge = text;
       if (fixedInput) rendererRef.current?.renderFooterLine();
     },
+    setFooterNote: (text: string) => {
+      state.footerNote = text;
+      if (fixedInput) rendererRef.current?.renderFooterLine();
+    },
   };
 
   // ── Renderer ────────────────────────────────────────────────────────────────
@@ -119,6 +137,7 @@ export function startTui(options: StartTuiOptions): void {
     ansi,
     colors,
     fixedInput,
+    inputMode: options.inputMode,
     rl,
     anyRl,
     footerText:  options.footerText,
@@ -131,6 +150,7 @@ export function startTui(options: StartTuiOptions): void {
 
   // ── rawBuffer: stores original println text for re-wrapping on resize ────────
   const rawBuffer: string[] = [];
+  let welcomeRawCount = 0;
 
   // ── println (real implementation, uses renderer) ────────────────────────────
   println = (text = '') => {
@@ -157,6 +177,28 @@ export function startTui(options: StartTuiOptions): void {
   const renderWelcome =
     options.renderWelcome ??
     ((c: TuiContext) => defaultWelcome(c, options.title, options.aiModel, options.showHints));
+
+  const rebuildWelcome = (clearViewport: boolean) => {
+    if (clearViewport) {
+      clearScreen();
+    }
+    rawBuffer.length = 0;
+    state.contentBuffer.length = 0;
+    state.scrollOffset = 0;
+    renderWelcome(ctx);
+    welcomeRawCount = rawBuffer.length;
+  };
+
+  redraw = () => {
+    rebuildWelcome(!screenInputMode);
+
+    if (fixedInput) {
+      renderer.requestRender();
+      return;
+    }
+
+    rl.prompt();
+  };
 
   // ── Autocomplete ────────────────────────────────────────────────────────────
   const ac = createAutocomplete({
@@ -205,13 +247,24 @@ export function startTui(options: StartTuiOptions): void {
   }
 
   // ── Resize handler ──────────────────────────────────────────────────────────
-  let welcomeRawCount = 0;
   const handleResize = () => {
+    if (fixedInput) {
+      process.stdout.write(ansi.cursorHide);
+    }
+    if (state.renderScheduled) {
+      clearTimeout(state.renderScheduled);
+      state.renderScheduled = undefined;
+    }
+    state.renderQueued = false;
     state.terminalWidth  = process.stdout.columns || 80;
     state.terminalHeight = process.stdout.rows    || 24;
     ctx.terminalWidth    = state.terminalWidth;
     ctx.terminalHeight   = state.terminalHeight;
-    clearScreen();
+    state.inputLineCount = 1;
+    anyRl._prevRows = 0;
+    if (!screenInputMode) {
+      clearScreen();
+    }
     // Save raw conversation entries (after welcome), wipe both buffers
     const savedRaw = rawBuffer.splice(welcomeRawCount);
     rawBuffer.length = 0;
@@ -228,7 +281,14 @@ export function startTui(options: StartTuiOptions): void {
         .flatMap((line) => (fixedInput ? wrapSingleLineForWidth(line, state.terminalWidth) : [line]));
       state.contentBuffer.push(...rewrapped);
     }
-    if (fixedInput) renderer.requestRender();
+    if (fixedInput) {
+      if (state.renderScheduled) {
+        clearTimeout(state.renderScheduled);
+        state.renderScheduled = undefined;
+      }
+      state.renderQueued = false;
+      renderer.renderScreen();
+    }
     else rl.prompt();
   };
   process.stdout.on('resize', handleResize);
@@ -266,9 +326,11 @@ export function startTui(options: StartTuiOptions): void {
     handleResize,
     recordRaw: (text: string) => rawBuffer.push(text),
   });
+
+  return ctx;
 }
 
 /** Backwards-compatible alias. */
-export function startTUI(options: StartTuiOptions): void {
-  startTui(options);
+export function startTUI(options: StartTuiOptions): TuiContext {
+  return startTui(options);
 }

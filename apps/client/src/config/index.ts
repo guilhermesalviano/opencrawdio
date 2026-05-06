@@ -38,11 +38,13 @@ export const config = {
     API_TOKEN: get('ai.API_TOKEN', ''),
     MODEL:     get('ai.MODEL',     'gemma4:e2b'),
   },
-  TELEGRAM: {
-    BOT_TOKEN:   get('telegram.BOT_TOKEN',   ''),
-    WEBHOOK_URL: get('telegram.WEBHOOK_URL', ''),
-    USE_POLLING: get('telegram.USE_POLLING', 'true') === 'true',
-    CHAT_ID:    get('telegram.CHAT_ID',    ''),
+  CHANNELS: {
+    TELEGRAM: {
+      BOT_TOKEN:   get('channels.telegram.BOT_TOKEN',   ''),
+      WEBHOOK_URL: get('channels.telegram.WEBHOOK_URL', ''),
+      USE_POLLING: get('channels.telegram.USE_POLLING', 'true') === 'true',
+      CHAT_ID:    get('channels.telegram.CHAT_ID',    ''),
+    },
   },
   PERSONAL_INFORMATION: {
     HUMAN_NAME: get('personal_information.HUMAN_NAME', ''),
@@ -54,7 +56,7 @@ export const config = {
 } as const;
 
 const isTelegramMode = process.argv.includes('telegram') || process.argv.includes('--telegram');
-if (!isTest && isTelegramMode && !config.TELEGRAM.BOT_TOKEN) {
+if (!isTest && isTelegramMode && !config.CHANNELS.TELEGRAM.BOT_TOKEN) {
   console.error('ERROR: TELEGRAM_BOT_TOKEN is required');
   console.error('Please set TELEGRAM_BOT_TOKEN in settings.json or as an environment variable');
   process.exit(1);

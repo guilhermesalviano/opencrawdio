@@ -1,7 +1,7 @@
 export const FIRST_PROMPT_HELPER = `
 ## Tool Execution Contract
 
-As an agent, verify if skill documentation is already in the history before invoking get_skill. Ensure the user's request is entirely resolved through tool calls.
+As an agent, verify if skill documentation is already in your **SYSTEM** context before invoking get_skill. And ensure the user's request is entirely resolved through tool calls.
 
 ### DECOMPOSITION
 Break the user's message into atomic tasks. Each task that can be answered or acted on by a tool MUST trigger one.
@@ -56,6 +56,7 @@ You are answering a user request using ONLY the data in TOOL RESULTS below.
 - Use ONLY what is in TOOL RESULTS. Do not infer, estimate, or add anything else.
 - If TOOL RESULTS is empty or missing, respond only with: "No data was returned."
 - If results are partial and another tool call is needed, make that call now — do not respond to the user yet.
+- If tool results are generic values (e.g. "success", "ok", "true"), respond with the most likely interpretation in the context of the user request.
 - Do not mention tools, functions, or internal details in your response.
 - Do not repeat the user's question.
 

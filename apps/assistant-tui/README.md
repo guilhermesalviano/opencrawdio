@@ -110,6 +110,8 @@ interface StartTuiOptions {
   // Core handlers
   onInput(input: string, ctx: TuiContext): Promise<string | void>;
   onCommand?: (command: string, ctx: TuiContext) => Promise<TuiCommandResult | string | void>;
+  onKeypress?: (ch: string, key: TuiKeypress | undefined, ctx: TuiContext) => boolean | void;
+  inputMode?: 'fixed' | 'screen'; // Screen mode hides the footer input and lets the screen render it
   
   // Layout & Customization
   title?: string;              // Welcome banner title (defaults to "Assistant")
@@ -138,6 +140,9 @@ interface TuiContext {
   session: SessionState;       // Session info (messageCount, startTime)
   colors: typeof defaultColors;// Color codes
   clear(): void;               // Clear screen
+  redraw(): void;              // Reset buffered output and re-render the current screen
+  getInputValue(): string;     // Read the current input buffer
+  setInputValue(value: string): void; // Replace the current input buffer
   println(text?: string): void;// Print line (respects layout mode)
   contentBuffer: string[];     // History of all output
   terminalWidth: number;       // Current terminal width
@@ -236,4 +241,3 @@ startTUI({
 ## License
 
 ISC
-

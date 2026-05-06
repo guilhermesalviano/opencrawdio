@@ -4,6 +4,7 @@ import { getAIProvider } from "../../../providers";
 import { MemoryType } from "../../../../types/memory";
 import { SUMMARIZATION_PROMPT } from "../../../../constants";
 import { replacePlaceholders } from "../../../../utils/prompt";
+import { beginFooterActivity } from "../../../../utils/footer-activity";
 import { ISubAgent } from "../../../../types/agents";
 
 interface SummarizerWorkerProps {
@@ -23,6 +24,7 @@ class Summarizer implements ISubAgent {
   async handler(
     props: SummarizerWorkerProps
   ): Promise<void> {
+    const endFooterActivity = beginFooterActivity('summarizer');
     this.logger.info(`Summarizer worker started for session ${props.sessionId} in ${props.channel}`);
     const provider = getAIProvider(this.logger);
 
@@ -41,6 +43,8 @@ class Summarizer implements ISubAgent {
       this.logger.info(`Summarizer worker completed for session ${props.sessionId}`);
     } catch (error) {
       this.logger.error(`Failed to summarize for session ${props.sessionId}`, { error });
+    } finally {
+      endFooterActivity();
     }
   }
 }
