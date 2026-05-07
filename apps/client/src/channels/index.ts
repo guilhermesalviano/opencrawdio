@@ -1,18 +1,17 @@
-import { config } from "../config";
-import { IAgent } from "../services/agents/main-agent/agent";
-import { TelegramChannelFactory } from "./telegram";
-import type { ILogger } from "../infrastructure/logger";
+import { ExtensionPoint } from '../plugins/registry';
+import type { ILogger } from '../infrastructure/logger';
+import type { IAgent } from '../services/agents/main-agent/agent';
 
 export type StopFn = () => void;
 
-interface ChannelDefinition {
+export interface ChannelDefinition {
   name: string;
   enabled: () => boolean;
   start: (logger: ILogger, agent: IAgent) => StopFn | void;
   sendMessage?: (logger: ILogger, target: string, message: string) => Promise<void>;
 }
 
-interface IChannelsManager {
+export interface IChannelsManager {
   startAll(): void;
   stopAll(): void;
   sendMessage(channel: string, target: string, message: string): Promise<void>;
@@ -70,36 +69,14 @@ class ChannelsManager implements IChannelsManager {
 class ChannelsSingleton {
   private static instance: ChannelsManager;
 
-  static getInstance(logger: ILogger, agent: IAgent): ChannelsManager {
+  static getInstance(logger: ILogger, agent: IAgent, channels: ChannelDefinition[] = []): ChannelsManager {
     if (!ChannelsSingleton.instance) {
-      const channels = [
-        {
-          name: 'telegram',
-          enabled: () => !!config.CHANNELS.TELEGRAM.BOT_TOKEN,
-          start: (logger: ILogger, agent: IAgent) => {
-            const { stop } = TelegramChannelFactory.start({
-              token: config.CHANNELS.TELEGRAM.BOT_TOKEN,
-              agent,
-              logger,
-            });
-            return stop;
-          },
-          sendMessage: async (_logger: ILogger, target: string, message: string) => {
-            const chatId = Number(target);
-
-            if (!Number.isFinite(chatId)) {
-              throw new Error(`Invalid Telegram chat ID: ${target}`);
-            }
-
-            await TelegramChannelFactory.sendText(chatId, message);
-          },
-        },
-      ];
-
       ChannelsSingleton.instance = new ChannelsManager(logger, agent, channels);
     }
     return ChannelsSingleton.instance;
   }
 }
 
-export { IChannelsManager, ChannelsSingleton };
+export { ChannelsManager, ChannelsSingleton };
+
+export const ADAPTERS = new ExtensionPoint<ChannelDefinition>('channels.adapters');

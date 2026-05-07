@@ -9,13 +9,14 @@ import { startTUI } from './tui';
 import { LoggerFactory, ILogger } from './infrastructure/logger';
 import { AgentFactory, IAgent } from './services/agents/main-agent/agent';
 import { IHeartbeatRunner, HeartbeatSingleton } from './services/agents/sub-agents/heartbeat/runner';
-import { ChannelsSingleton, IChannelsManager } from './channels';
+import { ChannelsSingleton, ADAPTERS, type IChannelsManager } from './channels';
 import { SHUTDOWN_SIGNALS } from './constants/tui';
 import { hasFlag, logError } from './utils/runtime';
 import { DatabaseServiceFactory } from './infrastructure/db-sqlite';
 import { SessionServiceFactory } from './services/session-service';
 import { config } from './config';
 import { DashboardServerFactory, WebServerHandle } from './dashboard';
+import { createPlugins, buildRegistry } from './plugins';
 
 const logger = LoggerFactory.create();
 const MODES = ['tui', 'web'] as const;
@@ -54,14 +55,11 @@ class Application implements IApplication {
     const db = DatabaseServiceFactory.create();
     const session = SessionServiceFactory.create(db, this.source);
     const agent = AgentFactory.create(this.logger, this.source, db, session);
-
-    const channels = ChannelsSingleton.getInstance(this.logger, agent);
+    const registry = buildRegistry(createPlugins());
+    const channels = ChannelsSingleton.getInstance(this.logger, agent, registry.collect(ADAPTERS));
     const heartbeat = HeartbeatSingleton.getInstance(this.logger, config.HEARTBEAT.INTERVAL_MS, channels);
 
-    if (config.CHANNELS.TELEGRAM.BOT_TOKEN) {
-      channels.startAll();
-    }
-
+    channels.startAll();
     heartbeat.start();
 
     try {

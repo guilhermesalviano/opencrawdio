@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TelegramMessage } from 'assistant-telegram-bot';
 import { RESPONSE_ANCHOR, THINK_END, THINK_START } from '../../../../src/constants/thinking';
-import { handleMessage } from '../../../../src/channels/telegram';
+import { handleMessage } from '../../../../src/plugins/telegram';
 
 const bot = vi.hoisted(() => ({
   sendChatAction: vi.fn(),
@@ -10,6 +10,7 @@ const bot = vi.hoisted(() => ({
 
 vi.mock('assistant-telegram-bot', () => ({
   getBot: () => bot,
+  initBot: vi.fn(),
 }));
 
 function createMessage(text: string): TelegramMessage {

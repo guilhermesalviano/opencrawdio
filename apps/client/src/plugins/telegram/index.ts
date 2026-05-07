@@ -1,7 +1,11 @@
-import { getBot, initBot, InlineKeyboardMarkup, TelegramMessage } from 'assistant-telegram-bot';
-import { ILogger } from '../../infrastructure/logger';
-import { IAgent } from '../../services/agents/main-agent/agent';
+import { getBot, initBot, type InlineKeyboardMarkup, type TelegramMessage } from 'assistant-telegram-bot';
+import type { ChannelDefinition } from '../../channels';
+import { ADAPTERS } from '../../channels';
+import type { ILogger } from '../../infrastructure/logger';
+import type { Plugin, PluginRegistry } from '../registry';
+import type { IAgent } from '../../services/agents/main-agent/agent';
 import { stripInternalStreamMarkers } from '../../utils/stream-markers';
+import { config } from '../../config';
 
 const TYPING_INTERVAL_MS = 5_000;
 const TELEGRAM_MESSAGE_LIMIT = 4_000;
@@ -22,6 +26,10 @@ interface TelegramChannelStartOptions {
   token: string;
   agent: IAgent;
   logger: ILogger;
+}
+
+interface TelegramPluginOptions {
+  token: string;
 }
 
 class TelegramChannel implements ITelegramChannel {
@@ -119,15 +127,10 @@ class TelegramChannel implements ITelegramChannel {
   private async withTypingIndicator<T>(chatId: number, work: () => Promise<T>): Promise<T> {
     try {
       await this.getBotClient().sendChatAction(chatId, 'typing');
-    } catch {
-      // Silently ignore initial typing action failures - don't block the work
-    }
+    } catch {}
 
     const timer = setInterval(() => {
-      void this.getBotClient().sendChatAction(chatId, 'typing').catch(() => {
-        // Silently ignore typing action refresh failures - they're not critical
-        // Network issues or rate limiting shouldn't interrupt user experience
-      });
+      void this.getBotClient().sendChatAction(chatId, 'typing').catch(() => {});
     }, TYPING_INTERVAL_MS);
 
     try {
@@ -210,7 +213,42 @@ async function sendWithApproval(
   await telegramChannel.sendWithApproval(logger, chatId, message, callbackData);
 }
 
+function createTelegramAdapter(options: TelegramPluginOptions): ChannelDefinition {
+  return {
+    name: 'telegram',
+    enabled: () => options.token.length > 0,
+    start: (logger: ILogger, agent: IAgent) => {
+      const { stop } = TelegramChannelFactory.start({
+        token: options.token,
+        agent,
+        logger,
+      });
+
+      return stop;
+    },
+    sendMessage: async (_logger: ILogger, target: string, message: string) => {
+      const chatId = Number(target);
+
+      if (!Number.isFinite(chatId)) {
+        throw new Error(`Invalid Telegram chat ID: ${target}`);
+      }
+
+      await TelegramChannelFactory.sendText(chatId, message);
+    },
+  };
+}
+
+function createTelegramPlugin(options: TelegramPluginOptions): Plugin {
+  return {
+    name: 'telegram',
+    setup(registry: PluginRegistry) {
+      registry.extend(ADAPTERS, createTelegramAdapter(options));
+    },
+  };
+}
+
 export {
+  createTelegramPlugin,
   handleMessage,
   ITelegramChannel,
   sendText,
@@ -219,6 +257,12 @@ export {
   TelegramChannel,
   TelegramChannelFactory,
 };
+
+export function create(): Plugin {
+  return createTelegramPlugin({
+    token: config.CHANNELS.TELEGRAM.BOT_TOKEN,
+  });
+}
 
 function splitMessage(text: string, maxLength: number): string[] {
   if (!text) {
