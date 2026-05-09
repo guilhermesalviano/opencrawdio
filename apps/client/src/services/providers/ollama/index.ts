@@ -20,10 +20,6 @@ type OllamaVersionResponse = {
   version?: string;
 };
 
-const IDLE_TIMEOUT_MS  = 90_000;  // 90 seconds for slow models like Gemma4
-const HARD_TIMEOUT_MS  = 15 * 60_000;  // 15 minutes total
-const HEALTH_TIMEOUT_MS = 5_000;  // 5 seconds for health checks
-
 class OllamaAIProvider implements AIProvider {
   readonly name = 'ollama';
 
@@ -42,7 +38,7 @@ class OllamaAIProvider implements AIProvider {
     const controller = new AbortController();
     const unlinkAbort = this.linkAbortSignal(options?.signal, controller);
 
-    const hardTimer = setTimeout(() => controller.abort(), HARD_TIMEOUT_MS);
+    const hardTimer = setTimeout(() => controller.abort(), config.AI.TIMEOUTS.HARD_MS);
     try {
       this.logger.debug('Ollama chat request', { 
         model: request.model ?? this.defaultModel,
@@ -79,13 +75,13 @@ class OllamaAIProvider implements AIProvider {
     this.logger.info("Ollama chatStream initiated")
 
     let idleTimer: NodeJS.Timeout | undefined;
-    const hardTimer = setTimeout(() => controller.abort(), HARD_TIMEOUT_MS);
+    const hardTimer = setTimeout(() => controller.abort(), config.AI.TIMEOUTS.HARD_MS);
     let totalChunksReceived = 0;
     let totalCharsYielded = 0;
 
     const bumpIdle = () => {
       clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS);
+      idleTimer = setTimeout(() => controller.abort(), config.AI.TIMEOUTS.IDLE_MS);
     };
 
     bumpIdle();
@@ -198,7 +194,7 @@ class OllamaAIProvider implements AIProvider {
 
   async healthCheck(): Promise<{ ok: boolean; detail?: string }> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), config.AI.TIMEOUTS.HEALTH_MS);
 
     try {
       const res = await fetch(`${this.baseUrl}/api/version`, {
