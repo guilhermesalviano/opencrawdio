@@ -16,7 +16,8 @@ class PluginRegistry {
   }
 
   collect<T>(point: ExtensionPoint<T>): T[] {
-    return (this.store.get(point.id) as T[] | undefined) ?? [];
+    const values = this.store.get(point.id) as T[] | undefined;
+    return values ? [...values] : [];
   }
 }
 

@@ -71,6 +71,17 @@ class ChannelsSingleton {
 
   static getInstance(logger: ILogger, agent: IAgent, channels: ChannelDefinition[] = []): ChannelsManager {
     if (!ChannelsSingleton.instance) {
+      const seen = new Set<string>();
+      const duplicates = channels
+        .map((c) => c.name)
+        .filter((name) => (seen.has(name) ? true : (seen.add(name), false)));
+
+      if (duplicates.length > 0) {
+        throw new Error(
+          `Duplicate channel names detected: ${[...new Set(duplicates)].join(', ')}. Each channel must have a unique name.`,
+        );
+      }
+
       ChannelsSingleton.instance = new ChannelsManager(logger, agent, channels);
     }
     return ChannelsSingleton.instance;
