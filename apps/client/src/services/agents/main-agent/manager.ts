@@ -6,7 +6,7 @@ import { LearnerWorkerFactory } from '../../workers/learner-worker';
 import { FIRST_PROMPT_HELPER, SKILL_READY_PROMPT } from '../../../constants';
 import { THINK_START, THINK_END, RESPONSE_ANCHOR } from '../../../constants/thinking';
 import { replacePlaceholders } from '../../../utils/prompt';
-import { MessageProviderFactory } from '../../chat/message-provider-stream';
+import { MessageProviderStreamFactory } from '../../chat/message-provider-stream';
 import type { ProcessedMessage, ProcessOptions } from '../../../types/agents';
 import type { IMessageService } from '../../message-service';
 import type { ILogger } from '../../../infrastructure/logger';
@@ -192,7 +192,7 @@ class Manager {
 
 class ManagerFactory {
   static create(logger: ILogger): IWorker {
-    const messageProvider = MessageProviderFactory.create(logger);
+    const messageProvider = MessageProviderStreamFactory.create(logger);
     const toolsQueue = ToolsQueueFactory.create(logger);
     return new Manager(logger, 'Manager', toolsQueue, messageProvider);
   }

@@ -41,7 +41,10 @@ class MessageProvider implements IMessageProvider {
       messageHistory: messagesHistory
     });
     
-    this.logger.debug(`paylod prompt value ${JSON.stringify(payload)}`);
+    this.logger.debug('AI request context', {
+      messageHistory: messagesHistory ?? [],
+      currentPrompt: message,
+    });
 
     const chatRequest = payload as AIChatRequest;
 

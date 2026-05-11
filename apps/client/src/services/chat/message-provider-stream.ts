@@ -34,7 +34,10 @@ class MessageProviderStream implements IMessageProvider {
       messageHistory: messagesHistory,
     });
 
-    this.logger.debug(`paylod prompt value ${JSON.stringify(payload)}`);
+    this.logger.debug('AI request context', {
+      messageHistory: messagesHistory ?? [],
+      currentPrompt: message,
+    });
 
     const chatRequest = payload as AIChatRequest;
 
@@ -73,10 +76,10 @@ class MessageProviderStream implements IMessageProvider {
   }
 }
 
-class MessageProviderFactory {
+class MessageProviderStreamFactory {
   static create(logger: ILogger): IMessageProvider {
     return new MessageProviderStream(logger);
   }
 }
 
-export { MessageProviderFactory };
+export { MessageProviderStreamFactory };
