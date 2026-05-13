@@ -35,8 +35,6 @@ class SkillsRepository {
           name: data.name ?? entry.name,
           description: data.description ?? '',
           read_when: data.read_when ?? null,
-          metadata: data.metadata ?? null,
-          path: join(skillsPath, entry.name),
         };
 
         return skill;
@@ -65,8 +63,6 @@ class SkillsRepository {
       name: data.name ?? entry.name,
       description: data.description ?? '',
       read_when: data.read_when ?? null,
-      metadata: data.metadata ?? null,
-      path: entry.name,
       content,
     };
   }

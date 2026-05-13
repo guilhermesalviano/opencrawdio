@@ -13,6 +13,7 @@ read_when:
 <rules>
   <rule name="data_enforcement">You MUST base your response strictly on the data returned from the API response or the `recent_emails` command. Do not hallucinate, guess, or invent information under any circumstances.</rule>
   <rule name="empty_data_handling">If the API returns no data, or the email list is empty, you must explicitly state that no information was found. Do not invent details to fill the gap; adapt your response to acknowledge the lack of data.</rule>
+  <rule>include email IDs in your responses whenever referencing specific emails, as this allows for accurate follow-up commands to retrieve snippets or full details.</rule>
 </rules>
 
 <commands>

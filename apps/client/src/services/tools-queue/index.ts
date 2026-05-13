@@ -1,7 +1,14 @@
 import pLimit from "p-limit";
-import type { AIAgentRequest, IToolsQueue, ToolCall, ToolResult } from "../../types/tools";
-import type { ILogger } from "../../infrastructure/logger";
 import { AgnosticExecutionToolFactory, IAgnosticExecutionTool } from "../tools";
+import type { ILogger } from "../../infrastructure/logger";
+import type { ToolCall, ToolResult } from "../../types/tools";
+
+interface IToolsQueue {
+  handle(
+    tools: ToolCall[],
+    signal: AbortSignal,
+  ): Promise<ToolResult[]>;
+}
 
 class ToolsQueue implements IToolsQueue {
   constructor(
@@ -12,7 +19,6 @@ class ToolsQueue implements IToolsQueue {
 
   async handle(
     tools: ToolCall[],
-    _agent: AIAgentRequest,
     signal: AbortSignal,
   ): Promise<ToolResult[]> {
     const limit = pLimit(this.maxWorkers);

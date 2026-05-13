@@ -1,19 +1,19 @@
 
 import { extractToolCalls, normalizeResponse } from '../../../utils/tool-calls';
-import { ToolsQueueFactory } from '../../tools-queue';
+import { IToolsQueue, ToolsQueueFactory } from '../../tools-queue';
 import { ExecutorWorkerFactory } from '../../workers/executor-worker';
 import { LearnerWorkerFactory } from '../../workers/learner-worker';
 import { FIRST_PROMPT_HELPER, SKILL_READY_PROMPT } from '../../../constants';
 import { THINK_START, THINK_END, RESPONSE_ANCHOR } from '../../../constants/thinking';
 import { replacePlaceholders } from '../../../utils/prompt';
-import { MessageProviderFactory } from '../../chat/message-provider-stream';
+import { MessageProviderStreamFactory } from '../../chat/message-provider-stream';
 import type { ProcessedMessage, ProcessOptions } from '../../../types/agents';
 import type { IMessageService } from '../../message-service';
 import type { ILogger } from '../../../infrastructure/logger';
 import type { Message } from '../../../entities/message';
 import type { IMessageProvider } from '../../../types/provider';
 import type { LoopContext } from '../../../types/context';
-import type { IToolsQueue, ToolCall } from '../../../types/tools';
+import type { ToolCall } from '../../../types/tools';
 import type { IWorker } from '../../../types/workers';
 
 interface ManagerArgs {
@@ -28,7 +28,7 @@ interface IManager {
   run(args: ManagerArgs): Promise<ProcessedMessage>;
 }
 
-class Manager {
+class Manager implements IManager {
   constructor(
     private logger: ILogger,
     public name: string,
@@ -192,7 +192,7 @@ class Manager {
 
 class ManagerFactory {
   static create(logger: ILogger): IWorker {
-    const messageProvider = MessageProviderFactory.create(logger);
+    const messageProvider = MessageProviderStreamFactory.create(logger);
     const toolsQueue = ToolsQueueFactory.create(logger);
     return new Manager(logger, 'Manager', toolsQueue, messageProvider);
   }

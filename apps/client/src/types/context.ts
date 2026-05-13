@@ -1,6 +1,6 @@
 import type { ProcessOptions } from "../types/agents";
 import type { IMessageService } from "../services/message-service";
-import type { IToolsQueue } from "../types/tools";
+import type { IToolsQueue } from "../services/tools-queue";
 
 export interface LoopContext {
   channel: string;

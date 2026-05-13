@@ -291,7 +291,7 @@ Express 5 server. Exports: `createApp()`, `startWebServer()`.
 | `POST /api/chat` | SSE stream; calls `AgentHandler.handle()`; emits `{type:'progress'}` + `{type:'content_block_delta'}`; sends `[DONE]`; respects client disconnect via `AbortController` |
 | `GET /health` | Calls `provider-health-service.healthCheck()`; returns `{status, timestamp, details}` |
 
-Default port: `config.PORT` (env `PORT`, default 3000).
+Default WEB_PORT: `config.WEB_PORT` (env `WEB_PORT`, default 3000).
 
 ### TUI (`channels/tui/index.ts`)
 

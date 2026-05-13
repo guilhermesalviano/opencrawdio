@@ -12,14 +12,14 @@ export async function executeGetSkill(
   args: ToolCall['arguments']
 ): Promise<ToolResult> {
 
-  if (!args.skill_name || !args.skill_path) {
-    logger.error('skill_name and skill_path are required.');
-    throw new Error('skill_name and skill_path are required.');
+  if (!args.skill_name) {
+    logger.error('skill_name is required.');
+    throw new Error('skill_name is required.');
   }
 
-  logger.info('get_skill args: ', { skillName: args.skill_name, skillPath: args.skill_path });
+  const requestedPath = resolve(BASE_SKILLS_DIR, String(args.skill_name));
 
-  const requestedPath = resolve(BASE_SKILLS_DIR, String(args.skill_path));
+  logger.info('get_skill args: ', { skillName: args.skill_name, skillPath: requestedPath });
 
   const isSafePath = requestedPath === BASE_SKILLS_DIR || requestedPath.startsWith(BASE_SKILLS_DIR + sep);
 

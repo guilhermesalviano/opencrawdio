@@ -28,29 +28,26 @@ describe('executeGetSkill', () => {
 
   it('throws when skill_name is missing', async () => {
     await expect(
-      executeGetSkill(mockLogger, { skill_path: 'weather' }),
-    ).rejects.toThrow('skill_name and skill_path are required.');
+      executeGetSkill(mockLogger, { skill_name: '' }),
+    ).rejects.toThrow('skill_name is required.');
 
-    expect(mockLogger.error).toHaveBeenCalledWith('skill_name and skill_path are required.');
-    expect(mockReadFile).not.toHaveBeenCalled();
-  });
-
-  it('throws when skill_path is missing', async () => {
-    await expect(
-      executeGetSkill(mockLogger, { skill_name: 'weather' }),
-    ).rejects.toThrow('skill_name and skill_path are required.');
-
+    expect(mockLogger.error).toHaveBeenCalledWith('skill_name is required.');
     expect(mockReadFile).not.toHaveBeenCalled();
   });
 
   it('blocks path traversal attempts', async () => {
+    const baseSkills = path.resolve(config.BASE_DIR, 'skills');
+    const traversalInput = '../../etc';
+
     await expect(
-      executeGetSkill(mockLogger, { skill_name: 'weather', skill_path: '../../etc' }),
+      executeGetSkill(mockLogger, { skill_name: traversalInput }),
     ).rejects.toThrow('Invalid skill_path: Access denied.');
 
     expect(mockLogger.error).toHaveBeenCalledWith(
       'Path traversal attempt detected.',
-      expect.objectContaining({ skillPath: '../../etc' }),
+      expect.objectContaining({
+        requestedPath: path.resolve(baseSkills, traversalInput),
+      }),
     );
     expect(mockReadFile).not.toHaveBeenCalled();
   });
@@ -61,7 +58,6 @@ describe('executeGetSkill', () => {
 
     const result = await executeGetSkill(mockLogger, {
       skill_name: 'weather',
-      skill_path: 'weather',
     });
 
     expect(result.toolName).toBe('get_skill');
@@ -78,7 +74,6 @@ describe('executeGetSkill', () => {
 
     const result = await executeGetSkill(mockLogger, {
       skill_name: 'plain',
-      skill_path: 'plain',
     });
 
     expect(result.success).toBe(true);
@@ -90,7 +85,6 @@ describe('executeGetSkill', () => {
 
     const result = await executeGetSkill(mockLogger, {
       skill_name: 'big',
-      skill_path: 'big',
     });
 
     expect((result.result ?? '').length).toBe(20000);

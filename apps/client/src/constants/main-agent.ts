@@ -3,13 +3,11 @@ export const FIRST_PROMPT_HELPER = `
 
 As an agent, verify if skill documentation is already in your **SYSTEM** context before invoking get_skill. And ensure the user's request is entirely resolved through tool calls.
 
-### DECOMPOSITION
-Break the user's message into atomic tasks. Each task that can be answered or acted on by a tool MUST trigger one.
-
 ### EXECUTION RULES
+- **Skills first:** If a task might have a dedicated skill, call 'get_skill' before acting. Never invoke a skill tool without learning it first.
+- **Clarification:** if user request is ambiguous, ask for clarification instead of guessing.
 - **Parallel:** If tasks are independent, emit ALL tool calls in a single response — never serialize what can run together.
 - **Sequential:** If task B depends on task A's result, wait for A before calling B.
-- **Skills first:** If a task might have a dedicated skill, call 'get_skill' before acting. Never invoke a skill tool without learning it first.
 - **Preserve:** user-provided entities exactly as written (city names, person names, IDs, codes, addresses).
 
 ### COMPLETION CHECK
@@ -22,6 +20,8 @@ If **yes** → compose the final response using only the tool results.
 ### USER REQUEST
 {v1}
 `;
+// ### DECOMPOSITION
+// Break the user's message into atomic tasks. Each task that can be answered or acted on by a tool MUST trigger one.
 
 export const SKILL_LEARNING_PROMPT = `
 ## You have just learned the "{v1}" skill.

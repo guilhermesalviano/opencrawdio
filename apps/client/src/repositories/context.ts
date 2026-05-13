@@ -43,11 +43,11 @@ class ContextRepository implements IContextRepository {
 
   private getPersonalInfo(params: any): PersonalInformation {
     return {
-      name: params.HUMAN_NAME,
-      gender: params.HUMAN_GENDER,
-      birthday: params.HUMAN_BIRTHDAY,
-      location: params.HUMAN_LOCATION,
-      occupation: params.HUMAN_OCCUPATION,
+      name: params.NAME,
+      gender: params.GENDER,
+      birthday: params.BIRTHDAY,
+      location: params.LOCATION,
+      occupation: params.OCCUPATION,
     };
   }
 

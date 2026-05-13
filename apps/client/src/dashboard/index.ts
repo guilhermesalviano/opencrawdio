@@ -223,8 +223,8 @@ class DashboardServer implements WebServerHandle {
 
   async start(): Promise<WebServerHandle> {
     const app = this.createApp();
-    this.server = app.listen(config.PORT, () => {
-      this.logger.info(`Server running at http://localhost:${config.PORT}`);
+    this.server = app.listen(config.WEB_PORT, () => {
+      this.logger.info(`Server running at http://localhost:${config.WEB_PORT}`);
     });
 
     return this;

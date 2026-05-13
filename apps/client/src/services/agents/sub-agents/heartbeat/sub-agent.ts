@@ -4,7 +4,6 @@ import { HeartbeatRepositoryFactory, IHeartbeatRepository } from "../../../../re
 import { isCronDue } from "../../../../utils/heartbeat";
 import { IPromptRepository, PromptRepositoryFactory } from "../../../../repositories/prompt";
 import { getAIProvider } from "../../../providers";
-import { ISkillsRepository, SkillsRepositoryFactory } from "../../../../repositories/skills";
 import { replacePlaceholders } from "../../../../utils/prompt";
 import { HEARTBEAT_PROMPT } from "../../../../constants";
 import type { ILogger } from "../../../../infrastructure/logger";
@@ -22,7 +21,6 @@ class Heartbeat implements ISubAgent {
     private logger: ILogger,
     private promptRepository: IPromptRepository,
     private heartbeatRepository: IHeartbeatRepository,
-    private skillsRepository: ISkillsRepository,
     private toolsQueue: IToolsQueue, 
     private channelsManager: IChannelsManager,
   ) { }
@@ -31,7 +29,6 @@ class Heartbeat implements ISubAgent {
     const provider = getAIProvider(this.logger);
     const executorWorker = ExecutorWorkerFactory.create(this.logger);
     const tasks = this.heartbeatRepository.getAll();
-    const skills = this.skillsRepository.get();
 
     const [ start, end ] = this.activeHoursHelper();
 
@@ -61,13 +58,14 @@ class Heartbeat implements ISubAgent {
 
       try {
         // refactor - usar um novo tipo de manager para heartbeat tasks, que não precisa de message history, channel, etc. Talvez só passar o texto da task e um contexto com logger.
-        const payload = this.promptRepository.withConfig({ includeTaskTools: false }).build({
-        userMessage: prompt, 
-        channel: 'tui', 
-        skills, 
-        toolsEnabled: true,
-        messageHistory: []
-      });
+        const payload = this.promptRepository
+          .build({
+            userMessage: prompt,
+            channel: 'tui',
+            toolsEnabled: true,
+            messageHistory: [],
+            includeTaskTools: false
+          });
 
         // this.logger.debug(`heartbeat prompt value ${JSON.stringify(payload)}`);
       
@@ -167,13 +165,12 @@ class Heartbeat implements ISubAgent {
 class HeartbeatFactory {
   static create(logger: ILogger, channelsManager: IChannelsManager): Heartbeat {
     const db = DatabaseServiceFactory.create();
-    const promptRepository = PromptRepositoryFactory.create(db);
+    const promptRepository = PromptRepositoryFactory.create(db, logger);
     const heartbeatRepository = HeartbeatRepositoryFactory.create(db);
-    const skillsRepository = SkillsRepositoryFactory.create(logger);
     const agnosticExecutionTool = AgnosticExecutionToolFactory.create();
     const toolsQueue = new ToolsQueue(logger, agnosticExecutionTool);
 
-    return new Heartbeat(logger, promptRepository, heartbeatRepository, skillsRepository, toolsQueue, channelsManager);
+    return new Heartbeat(logger, promptRepository, heartbeatRepository, toolsQueue, channelsManager);
   }
 }
 

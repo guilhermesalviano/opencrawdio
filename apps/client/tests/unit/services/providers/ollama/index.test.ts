@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { OllamaAIProvider } from '../../../../../src/services/providers/ollama';
+import { config } from '../../../../../src/config';
 import { LoggerFactory } from '../../../../../src/infrastructure/logger';
 
 describe('OllamaAIProvider', () => {
@@ -106,7 +107,49 @@ describe('OllamaAIProvider', () => {
 
     const fetchArgs = (fetchMock as any).mock.calls[0]?.[1];
     const body = typeof fetchArgs?.body === 'string' ? JSON.parse(fetchArgs.body) : undefined;
+    const headers = new Headers(fetchArgs?.headers);
     expect(body?.tools).toBeDefined();
     expect(body?.tools[0]?.function?.name).toBe('search');
+    expect(headers.get('content-type')).toBe('application/json');
+  });
+
+  it('arms idle timeout before the first stream chunk arrives', async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            init?.signal?.addEventListener(
+              'abort',
+              () => controller.error(new DOMException('Aborted', 'AbortError')),
+              { once: true },
+            );
+          },
+        });
+
+        return new Response(stream, {
+          status: 200,
+          headers: { 'content-type': 'application/x-ndjson' },
+        });
+      }) as unknown as typeof fetch;
+
+    const provider = new OllamaAIProvider(logger, { baseUrl: 'http://localhost:11434', model: 'test' });
+    const outer = new AbortController();
+    const iterator = provider.chatStream(
+      { messages: [{ role: 'user', content: 'hi' }] },
+      { signal: outer.signal },
+    );
+
+    const nextChunk = iterator.next();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), config.AI.TIMEOUTS.HARD_MS);
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), config.AI.TIMEOUTS.IDLE_MS);
+
+    outer.abort();
+    await expect(nextChunk).rejects.toThrow('Ollama request aborted');
   });
 });

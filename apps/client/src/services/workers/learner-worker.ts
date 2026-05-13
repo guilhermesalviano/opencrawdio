@@ -22,7 +22,6 @@ class LearnerWorker implements IWorker {
   constructor(
     private logger: ILogger,
     public name: string = 'learnerWorker',
-    private model = { model: config.AI.MODEL },
     private skillsRepo: ILearnedSkillsRepository
   ) { }
 
@@ -44,7 +43,6 @@ class LearnerWorker implements IWorker {
 
       const skillResults = await ctx.toolsQueue.handle(
         [ toolCall ],
-        this.model,
         ctx.signal
       );
       const skillContent = skillResults
@@ -76,10 +74,9 @@ class LearnerWorker implements IWorker {
 
 class LearnerWorkerFactory {
   static create(logger: ILogger): IWorker {
-    const model = { model: config.AI.MODEL };
     const db = DatabaseServiceFactory.create();
     const skillsRepo = LearnedSkillsRepositoryFactory.create(db);
-    return new LearnerWorker(logger, 'learnerWorker', model, skillsRepo);
+    return new LearnerWorker(logger, 'learnerWorker', skillsRepo);
   }
 }
 

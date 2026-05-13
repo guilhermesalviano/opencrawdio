@@ -17,11 +17,3 @@ export type CommandFn = (logger: ILogger, args: Record<string, unknown>) => Prom
 export interface AIAgentRequest {
   model?: string;
 }
-
-export interface IToolsQueue {
-  handle(
-    tools: ToolCall[],
-    _agent: AIAgentRequest,
-    signal: AbortSignal,
-  ): Promise<ToolResult[]>;
-}

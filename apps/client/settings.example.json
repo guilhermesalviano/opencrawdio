@@ -1,42 +1,47 @@
 {
-  "TEMP_FOLDER": "./temp",
-  "PORT": 3000,
-  "TIMEZONE": "America/Sao_Paulo",
-  "gmail": {
-    "GATEWAY_HOST": "http://localhost:3000"
-  },
+  "temp_folder": "./temp",
+  "web_port": 3000,
+  "timezone": "America/Sao_Paulo",
   "log": {
-    "LEVEL": "debug"
+    "level": "debug"
+  },
+  "gmail": {
+    "gateway_host": "http://localhost:3000"
   },
   "heartbeat": {
-    "ENABLED": true,
-    "ACTIVE_HOURS": {
-      "START": "08:00",
-      "END": "22:00"
+    "enabled": true,
+    "active_hours": {
+      "start": "08:00",
+      "end": "22:00"
     },
-    "INTERVAL_MS": 1800000
+    "interval_ms": 1800000
   },
   "channels": {
     "telegram": {
-      "ENABLED": true,
-      "BOT_TOKEN": "YOUR_BOT_TOKEN",
-      "USE_POLLING": true,
-      "CHAT_ID": "YOUR_CHAT_ID"
+      "enabled": true,
+      "use_polling": true,
+      "bot_token": "YOUR_BOT_TOKEN",
+      "chat_id": "YOUR_CHAT_ID"
     }
   },
   "ai": {
-    "ALLOW_REMOTE_BASE_URL": false,
-    "PROVIDER": "ollama",
-    "BASE_URL": "http://localhost:11434",
-    "API_TOKEN": "",
-    "MODEL": "gemma4:e4b",
-    "THINK_MODEL": "gemma4:26b-a4b-it-q4_K_M"
+    "allow_remote_url": false,
+    "provider": "ollama",
+    "base_url": "http://localhost:11434",
+    "api_token": "",
+    "model": "gemma4:e4b",
+    "think_model": "gemma4:26b-a4b-it-q4_K_M",
+    "timeouts": {
+      "idle_ms": 360000,
+      "hard_ms": 1200000,
+      "health_ms": 5000
+    }
   },
   "personal_information": {
-    "HUMAN_NAME": "John Doe",
-    "HUMAN_GENDER": "male",
-    "HUMAN_BIRTHDAY": "1990-01-01",
-    "HUMAN_LOCATION": "New York, USA",
-    "HUMAN_OCCUPATION": "Software Engineer"
+    "name": "John Doe",
+    "gender": "male",
+    "birthday": "1990-01-01",
+    "location": "New York, USA",
+    "occupation": "Software Engineer"
   }
 }

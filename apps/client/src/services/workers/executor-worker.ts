@@ -1,15 +1,15 @@
 import { extractToolCalls, normalizeResponse } from "../../utils/tool-calls";
-import { config } from "../../config";
 import { TOOLS_RESULT_PROMPT } from "../../constants";
 import { replacePlaceholders } from "../../utils/prompt";
-import type { ToolCall } from "../../types/tools";
-import type { LoopContext } from "../../types/context";
-import type { ProcessedMessage } from "../../types/agents";
-import type { Message } from "../../entities/message";
 import { MessageProviderFactory } from "../chat/message-provider";
 import { IWorker } from "../../types/workers";
 import { IMessageProvider } from "../../types/provider";
 import { ILogger } from "../../infrastructure/logger";
+import type { ToolCall } from "../../types/tools";
+import type { LoopContext } from "../../types/context";
+import type { ProcessedMessage } from "../../types/agents";
+import type { Message } from "../../entities/message";
+
 interface ExecutorWorkerArgs {
   toolCalls: ToolCall[];
   userMessage: string;
@@ -43,7 +43,6 @@ class ExecutorWorker implements IWorker {
 
     const toolResultsArray = await ctx.toolsQueue.handle(
       toolCalls,
-      { model: config.AI.MODEL },
       ctx.signal
     );
 
