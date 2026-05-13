@@ -198,4 +198,4 @@ class ManagerFactory {
   }
 }
 
-export { IManager, Manager, ManagerFactory, IMessageProvider };
+export { IManager, Manager, ManagerFactory };
