@@ -14,6 +14,6 @@
     "start:tui": "turbo run start:tui --filter=koris-agent"
   },
   "devDependencies": {
-    "turbo": "^2.9.12"
+    "turbo": "^2.9.14"
   }
 }
