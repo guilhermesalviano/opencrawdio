@@ -125,6 +125,10 @@ function resolveRuntimeModes(argv: string[] = process.argv): RuntimeModes {
   }, { tui: false, web: false });
 
   if (Object.values(explicitModes).some(Boolean)) {
+    // go-tui connects to the web server via HTTP, so web must be enabled in TUI mode
+    if (explicitModes.tui) {
+      explicitModes.web = true;
+    }
     return explicitModes;
   }
 

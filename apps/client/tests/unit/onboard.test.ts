@@ -115,22 +115,26 @@ describe('buildOnboardingScreen', () => {
 });
 
 describe('Onboard footer progress', () => {
-  it('keeps personal substeps under step 6 in the footer', () => {
-    const onboard = new Onboard() as any;
-    onboard.answers = {
-      channels: ['telegram'],
-      telegramToken: '123456:token',
-      provider: 'openai',
-      providerApiToken: '',
-      providerUrl: 'https://api.openai.com/v1',
-      personalInfo: { enabled: true, name: 'Joe Doe' },
-    };
-    onboard.skippedSteps = new Set();
-
-    expect(onboard.getFooterText()).toBe('step 6/6');
+  it('renders personal substeps under step 6 in the onboarding screen', () => {
+    const screen = buildOnboardingScreen(
+      {
+        answers: {
+          channels: ['telegram'],
+          telegramToken: '123456:token',
+          provider: 'openai',
+          providerApiToken: '',
+          providerUrl: 'https://api.openai.com/v1',
+          personalInfo: { enabled: true, name: 'Joe Doe' },
+        },
+        skippedSteps: [],
+      },
+      72,
+      'plain',
+    );
+    expect(screen).toContain('6.1. Your name');
   });
 
-  it('creates the temp settings draft when onboarding completes from a false picker selection', () => {
+  it('creates the temp settings draft when onboarding completes from a handleInput call', () => {
     const repoRoot = createTempDir();
     const appRoot = join(repoRoot, 'apps', 'client');
     const previousCwd = process.cwd();
@@ -183,7 +187,7 @@ describe('Onboard footer progress', () => {
         },
       };
 
-      expect(onboard.handleKeypress('', { name: 'return' }, ctx)).toBe(true);
+      expect(onboard.handleInput('false', ctx));
       expect(readFileSync(join(appRoot, SETTINGS_FILENAME), 'utf-8')).toContain('"personal_information": {}');
       expect(inputValues).toContain('');
       expect(redrawCalls).toHaveLength(1);

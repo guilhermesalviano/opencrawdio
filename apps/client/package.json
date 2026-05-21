@@ -11,7 +11,8 @@
     "onboard": "node dist/src/onboard.js",
     "app": "node dist/src/app.js",
     "clean": "rm -rf dist",
-    "build": "pnpm run clean && tsc --project tsconfig.json",
+    "build": "pnpm run clean && tsc --project tsconfig.json && pnpm run build:go-tui",
+    "build:go-tui": "mkdir -p bin && go build -C ../go-tui -o $(pwd)/bin/go-tui .",
     "lint": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -32,7 +33,6 @@
   "homepage": "https://github.com/guilhermesalviano/koris-agent#readme",
   "dependencies": {
     "assistant-telegram-bot": "workspace:*",
-    "assistant-tui": "workspace:*",
     "better-sqlite3": "^12.9.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

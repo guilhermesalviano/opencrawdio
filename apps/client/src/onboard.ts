@@ -1,16 +1,41 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname as pathDirname, join, normalize } from 'path';
-import { startTui, type TuiCommandResult, type TuiContext, type TuiKeypress } from 'assistant-tui';
+import * as readline from 'readline';
 import { resolveConfigPaths } from './config/helpers';
 
-const ONBOARDING_COMMANDS = [
-  { name: '/start', description: 'redraw the onboarding screen' },
-  { name: '/help', description: 'show onboarding commands' },
-  { name: '/status', description: 'show current onboarding progress' },
-  { name: '/reset', description: 'restart the onboarding flow' },
-  { name: '/clear', description: 'redraw the current step' },
-  { name: '/exit', description: 'leave onboarding' },
-];
+// Local minimal context interface used by the onboarding wizard (replaces assistant-tui types).
+interface OnboardCtx {
+  colors: { bright: string; dim: string; reset: string; [key: string]: string };
+  clear(): void;
+  redraw(): void;
+  getInputValue(): string;
+  setInputValue(value: string): void;
+  println(text?: string): void;
+  contentBuffer: string[];
+  terminalWidth: number;
+}
+
+interface OnboardCommandResult {
+  handled: boolean;
+  action: 'none' | 'exit' | 'clear';
+  response?: string;
+}
+
+const ONBOARD_COLORS: OnboardCtx['colors'] = {
+  reset: '\x1b[0m',
+  bright: '\x1b[1m',
+  dim: '\x1b[2m',
+  white: '\x1b[97m',
+  cyan: '\x1b[36m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  bgBlue: '\x1b[44m',
+  bgGray: '\x1b[100m',
+  magenta: '\x1b[35m',
+  gray: '\x1b[90m',
+  red: '\x1b[31m',
+};
 
 const SUPPORTED_CHANNELS = ['telegram', 'discord'] as const;
 const SUPPORTED_PROVIDERS = ['ollama', 'openai', 'anthropic', 'deepseek'] as const;
@@ -362,27 +387,76 @@ export class Onboard {
   private notice = 'Follow the active step and press Enter after each answer. Type skip for optional fields.';
 
   async run(): Promise<void> {
-    startTui({
-      title: 'koris-agent onboarding',
-      fixedInput: true,
-      inputMode: 'screen',
-      allowEmptyInput: true,
-      spinner: false,
-      answerDoneSound: false,
-      assistantPrefix: '◆',
-      prompt: '',
-      inputCursorMark: '',
-      placeholder: '',
-      commands: ONBOARDING_COMMANDS,
-      footerText: () => this.getFooterText(),
-      renderWelcome: (ctx) => this.renderWelcome(ctx),
-      onCommand: async (command, ctx) => this.handleCommand(command, ctx),
-      onKeypress: (ch: string, key: TuiKeypress | undefined, ctx: TuiContext) => this.handleKeypress(ch, key, ctx),
-      onInput: async (input, ctx) => this.handleInput(input, ctx),
-    });
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    let currentInput = '';
+
+    const printScreen = () => {
+      const width = Math.max(48, (process.stdout.columns ?? 80) - 4);
+      const currentStep = getCurrentStepFromState(this.answers, this.skippedSteps);
+      process.stdout.write('\x1b[2J\x1b[H');
+      process.stdout.write(
+        buildOnboardingScreen(
+          {
+            answers: this.answers,
+            skippedSteps: [...this.skippedSteps],
+            selectedOption: this.getSelectedOption(currentStep),
+            selectedOptions: this.getSelectedOptions(currentStep),
+            notice: this.notice,
+          },
+          width,
+          'plain',
+        ) + '\n\n',
+      );
+    };
+
+    const ctx: OnboardCtx = {
+      colors: ONBOARD_COLORS,
+      clear: printScreen,
+      redraw: printScreen,
+      getInputValue: () => currentInput,
+      setInputValue: (val: string) => { currentInput = val; },
+      println: (text?: string) => process.stdout.write((text ?? '') + '\n'),
+      contentBuffer: [],
+      terminalWidth: process.stdout.columns ?? 80,
+    };
+
+    const question = (prompt: string): Promise<string | null> =>
+      new Promise((resolve) => {
+        const onClose = () => resolve(null);
+        rl.once('close', onClose);
+        rl.question(prompt, (answer) => {
+          rl.removeListener('close', onClose);
+          resolve(answer);
+        });
+      });
+
+    printScreen();
+
+    while (true) {
+      const input = await question('> ');
+      if (input === null) break;
+
+      currentInput = input;
+      const trimmed = input.trim();
+
+      if (trimmed.startsWith('/')) {
+        const result = this.handleCommand(trimmed, ctx);
+        if (result.response) {
+          process.stdout.write(result.response + '\n');
+        }
+        if (result.action === 'exit') {
+          break;
+        }
+        printScreen();
+      } else {
+        this.handleInput(trimmed, ctx);
+      }
+    }
+
+    rl.close();
   }
 
-  private handleCommand(command: string, ctx: TuiContext): TuiCommandResult {
+  private handleCommand(command: string, ctx: OnboardCtx): OnboardCommandResult {
     const normalized = command.trim().toLowerCase().split(/\s+/, 1)[0];
 
     switch (normalized) {
@@ -395,7 +469,7 @@ export class Onboard {
         return {
           handled: true,
           action: 'none',
-          response: buildOnboardingHelp(this.getMaxContentWidth(ctx)),
+          response: buildOnboardingHelp(Math.max(48, ctx.terminalWidth - 6)),
         };
 
       case '/status':
@@ -410,8 +484,8 @@ export class Onboard {
               selectedOptions: this.getSelectedOptions(getCurrentStepFromState(this.answers, this.skippedSteps)),
               notice: this.notice,
             },
-            this.getMaxContentWidth(ctx),
-            'tui',
+            Math.max(48, ctx.terminalWidth - 6),
+            'plain',
           ),
         };
 
@@ -438,7 +512,7 @@ export class Onboard {
     }
   }
 
-  private handleInput(input: string, ctx: TuiContext): void {
+  private handleInput(input: string, ctx: OnboardCtx): void {
     const step = getCurrentStepFromState(this.answers, this.skippedSteps);
     if (step === 'complete') {
       this.notice = 'Onboarding is already complete. Use /reset to start over or /exit to leave.';
@@ -532,7 +606,7 @@ export class Onboard {
     this.afterStepChange(ctx);
   }
 
-  private afterStepChange(ctx: TuiContext): void {
+  private afterStepChange(ctx: OnboardCtx): void {
     if (isComplete(this.answers, this.skippedSteps)) {
       const savedPath = saveOnboardingSettings(this.answers);
       this.notice = `${this.notice} Saved settings draft to ${savedPath}.`;
@@ -546,52 +620,6 @@ export class Onboard {
     ctx.redraw();
   }
 
-  private renderWelcome(ctx: TuiContext): void {
-    const { colors, println } = ctx;
-    const currentStep = getCurrentStepFromState(this.answers, this.skippedSteps);
-    const selectedOption = this.getSelectedOption(currentStep);
-    const screen = buildOnboardingScreen(
-      {
-        answers: this.answers,
-        skippedSteps: [...this.skippedSteps],
-        selectedOption,
-        selectedOptions: this.getSelectedOptions(currentStep),
-        inputValue: this.getPickableOptions(currentStep) ? undefined : ctx.getInputValue(),
-        notice: this.notice,
-      },
-      this.getMaxContentWidth(ctx),
-      'tui',
-    );
-
-    const [title, subtitle, ...rest] = screen.split('\n');
-    println(`${colors.bright}${title}${colors.reset}`);
-    println(`${colors.dim}${subtitle}${colors.reset}`);
-
-    for (const line of rest) {
-      println(line);
-    }
-
-    println();
-    // println(`${colors.dim}Type /help for onboarding commands.${colors.reset}`);
-    // println();
-
-    if (this.getPickableOptions(currentStep)) {
-      ctx.setInputValue('');
-    }
-  }
-
-  private getFooterText(): string {
-    const footerProgress = getFooterProgress(this.answers, this.skippedSteps);
-    if (!footerProgress) {
-      return 'onboarding complete';
-    }
-
-    return `step ${footerProgress.current}/${footerProgress.total}`;
-  }
-
-  private getMaxContentWidth(ctx: TuiContext): number {
-    return Math.max(48, ctx.terminalWidth - 6);
-  }
 
   private applySkip(step: StepKey): void {
     this.skippedSteps.add(step);
@@ -665,110 +693,6 @@ export class Onboard {
     }
   }
 
-  private handleKeypress(ch: string, key: TuiKeypress | undefined, ctx: TuiContext): boolean {
-    const keyName = key?.name;
-    const currentStep = getCurrentStepFromState(this.answers, this.skippedSteps);
-    const options = this.getPickableOptions(currentStep);
-    const inputValue = ctx.getInputValue();
-
-    if (!this.isAllowedOnboardKey(ch, key, currentStep, inputValue)) {
-      return true;
-    }
-
-    if (!options || options.length === 0 || currentStep === 'complete') {
-      const defaultValue = currentStep === 'complete'
-        ? undefined
-        : this.getTextInputDefault(currentStep);
-      if ((keyName === 'return' || keyName === 'enter') && !inputValue.trim() && defaultValue) {
-        ctx.setInputValue(defaultValue);
-      }
-      return false;
-    }
-
-    if (inputValue.trim().startsWith('/') || ch === '/') {
-      return false;
-    }
-
-    this.ensurePickerState(currentStep, options);
-
-    if (keyName === 'up' || keyName === 'down') {
-      const delta = keyName === 'up' ? -1 : 1;
-      this.pickerIndex = (this.pickerIndex + delta + options.length) % options.length;
-      ctx.setInputValue('');
-      ctx.redraw();
-      return true;
-    }
-
-    if ((keyName === 'tab' || keyName === 'space') && currentStep === 'channels') {
-      this.toggleChannelSelection(options[this.pickerIndex] as OnboardingChannel);
-      ctx.setInputValue('');
-      ctx.redraw();
-      return true;
-    }
-
-    if (keyName === 'return' || keyName === 'enter') {
-      this.commitPickableStep(currentStep);
-      ctx.setInputValue('');
-      this.afterStepChange(ctx);
-      return true;
-    }
-
-    if (
-      keyName === 'backspace'
-      || keyName === 'delete'
-      || keyName === 'left'
-      || keyName === 'right'
-      || keyName === 'home'
-      || keyName === 'end'
-      || (typeof ch === 'string' && ch.length > 0 && ch.charCodeAt(0) >= 32)
-    ) {
-      return true;
-    }
-
-    return false;
-  }
-
-  private isAllowedOnboardKey(
-    ch: string,
-    key: TuiKeypress | undefined,
-    step: OnboardingStep,
-    inputValue: string,
-  ): boolean {
-    const keyName = key?.name;
-    const isPrintable = typeof ch === 'string' && ch.length > 0 && ch.charCodeAt(0) >= 32;
-    const isEditingKey =
-      keyName === 'backspace'
-      || keyName === 'delete'
-      || keyName === 'left'
-      || keyName === 'right'
-      || keyName === 'home'
-      || keyName === 'end';
-    const isSubmitKey = keyName === 'return' || keyName === 'enter';
-    const isCommandInput = inputValue.trim().startsWith('/') || ch === '/';
-
-    if (key?.ctrl && keyName === 'c') {
-      return true;
-    }
-
-    if (isCommandInput) {
-      return isPrintable || isEditingKey || isSubmitKey || keyName === 'tab' || keyName === 'up' || keyName === 'down';
-    }
-
-    if (step === 'complete') {
-      return false;
-    }
-
-    const options = this.getPickableOptions(step);
-    if (options && options.length > 0) {
-      if (keyName === 'up' || keyName === 'down' || isSubmitKey || isEditingKey) {
-        return true;
-      }
-
-      return step === 'channels' && (keyName === 'tab' || keyName === 'space');
-    }
-
-    return isPrintable || isEditingKey || isSubmitKey;
-  }
 
   private getPickableOptions(step: OnboardingStep): readonly string[] | undefined {
     if (step === 'complete') {
@@ -776,10 +700,6 @@ export class Onboard {
     }
 
     return getStepDefinition(step).options;
-  }
-
-  private getTextInputDefault(step: Exclude<OnboardingStep, 'complete'>): string | undefined {
-    return getStepDefinition(step).placeholder;
   }
 
   private getSelectedOption(step: OnboardingStep): string | undefined {
@@ -820,59 +740,6 @@ export class Onboard {
     }
   }
 
-  private toggleChannelSelection(channel: OnboardingChannel): void {
-    if (this.selectedChannels.has(channel)) {
-      this.selectedChannels.delete(channel);
-      return;
-    }
-
-    this.selectedChannels.add(channel);
-  }
-
-  private commitPickableStep(step: Exclude<OnboardingStep, 'complete'>): void {
-    const selectedOption = this.getSelectedOption(step);
-    if (!selectedOption) {
-      return;
-    }
-
-    switch (step) {
-      case 'channels': {
-        const selectedChannels = this.selectedChannels.size > 0
-          ? [...this.selectedChannels]
-          : [selectedOption as OnboardingChannel];
-        this.answers.channels = parseChannels(selectedChannels.join(', '));
-        this.selectedChannels = new Set(this.answers.channels);
-        if (!usesTelegramChannel(this.answers)) {
-          delete this.answers.telegramToken;
-        }
-        this.notice = `Captured channels: ${this.answers.channels.join(', ')}.`;
-        this.pickerStep = undefined;
-        return;
-      }
-
-      case 'provider':
-        this.answers.provider = parseProvider(selectedOption);
-        this.notice = `Captured provider: ${this.answers.provider}.`;
-        this.pickerStep = undefined;
-        return;
-
-      case 'personalInformation':
-        this.setPersonalInformationEnabled(parseBooleanOption(selectedOption));
-        this.notice = `Personal information ${this.answers.personalInfo?.enabled ? 'enabled' : 'disabled'}.`;
-        this.pickerStep = undefined;
-        return;
-
-      case 'providerUrl':
-      case 'providerApiToken':
-      case 'telegramToken':
-      case 'personalName':
-      case 'personalGender':
-      case 'personalBirthday':
-      case 'personalLocation':
-      case 'personalOccupation':
-        return;
-    }
-  }
 }
 
 function getTimelineEntries(
@@ -923,32 +790,7 @@ function getTimelineDisplayNumbers(definitions: readonly StepDefinition[]): Map<
   return displayNumbers;
 }
 
-function getTopLevelStepDefinitions(answers: Partial<OnboardingAnswers>): StepDefinition[] {
-  return getEnabledStepDefinitions(answers).filter((definition) => !PERSONAL_DETAIL_STEP_KEYS.has(definition.key));
-}
 
-function getTopLevelStepKey(step: StepKey): StepKey {
-  return PERSONAL_DETAIL_STEP_KEYS.has(step) ? 'personalInformation' : step;
-}
-
-function getFooterProgress(
-  answers: Partial<OnboardingAnswers>,
-  skippedSteps: ReadonlySet<StepKey>,
-): { current: number; total: number } | undefined {
-  const currentStep = getCurrentStepFromState(answers, skippedSteps);
-  if (currentStep === 'complete') {
-    return undefined;
-  }
-
-  const topLevelDefinitions = getTopLevelStepDefinitions(answers);
-  const currentTopLevelKey = getTopLevelStepKey(currentStep);
-  const currentIndex = topLevelDefinitions.findIndex((definition) => definition.key === currentTopLevelKey);
-
-  return {
-    current: currentIndex >= 0 ? currentIndex + 1 : topLevelDefinitions.length,
-    total: topLevelDefinitions.length,
-  };
-}
 
 function getTimelineState(
   step: StepKey,
